@@ -148,9 +148,14 @@ const unpackedSplatToUncompressedSplat = function() {
 
 // Helper function to check sizes (matching C++ checkSizes function)
 function checkSizes2(packed, numPoints, shDim, usesFloat16) {
+		let rotByteLength = numPoints * 3;
+		if (packed.headerVersion === 3) {
+			rotByteLength = numPoints * 4;
+		}
+
     if (packed.positions.length !== numPoints * 3 * (usesFloat16 ? 2 : 3)) return false;
     if (packed.scales.length !== numPoints * 3) return false;
-    if (packed.rotations.length !== numPoints * 3) return false;
+    if (packed.rotations.length !== rotByteLength) return false;
     if (packed.alphas.length !== numPoints) return false;
     if (packed.colors.length !== numPoints * 3) return false;
     if (packed.sh.length !== numPoints * shDim * 3) return false;
@@ -165,6 +170,7 @@ function unpackGaussians(packed, outSphericalHarmonicsDegree, directToSplatBuffe
 
     // Validate sizes
     if (!checkSizes2(packed, numPoints, shDim, usesFloat16)) {
+				console.error(`[SPZ: ERROR] Invalid sizes: ${packed}`)
         return null;
     }
 
@@ -209,18 +215,62 @@ function unpackGaussians(packed, outSphericalHarmonicsDegree, directToSplatBuffe
             splat.scale[j] = Math.exp(packed.scales[i * 3 + j] / 16.0 - 10.0);
         }
 
-        // Splat rotation
-        const r = packed.rotations.subarray(i * 3, i * 3 + 3);
-        const xyz = [
-            r[0] / 127.5 - 1.0,
-            r[1] / 127.5 - 1.0,
-            r[2] / 127.5 - 1.0
-        ];
-        splat.rotation[0] = xyz[0];
-        splat.rotation[1] = xyz[1];
-        splat.rotation[2] = xyz[2];
-        const squaredNorm = xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2];
-        splat.rotation[3] = Math.sqrt(Math.max(0.0, 1.0 - squaredNorm));
+				// Splat rotation
+				if (packed.headerVersion === 3) {
+						const maxValue = 1 / Math.sqrt(2)
+						const quaternion = [0, 0, 0, 0];
+						const values = [
+							packed.rotations[i * 4],
+							packed.rotations[i * 4 + 1],
+							packed.rotations[i * 4 + 2],
+							packed.rotations[i * 4 + 3],
+						];
+
+						// all values are packed in 32 bits (10 per each of 3 components + 2 bits of index of larged value)
+						const combinedValues =
+								values[0] + (values[1] << 8) + (values[2] << 16) + (values[3] << 24);
+						// each component value is 9 bits + sign (1 bit)
+						const valueMask = (1 << 9) - 1;
+						// extract index of the largest element. 2 top bits.
+						const largestIndex = combinedValues >>> 30;
+						let remainingValues = combinedValues;
+						let sumSquares = 0;
+
+						for (let i = 3; i >= 0; --i) {
+							if (i !== largestIndex) {
+								// extract current value and sign.
+								const value = remainingValues & valueMask;
+								const sign = (remainingValues >>> 9) & 0x1;
+								// each value is represented as 10 bits. Shift to next one.
+								remainingValues = remainingValues >>> 10;
+								// convert to range [0,1] and then to [0, 0.7071]
+								quaternion[i] = maxValue * (value / valueMask);
+								// apply sign.
+								quaternion[i] = sign === 0 ? quaternion[i] : -quaternion[i];
+								// accumulate the sum of squares
+								sumSquares += quaternion[i] * quaternion[i];
+							}
+						}
+
+						// quartenion length must be 1 (x^2+y^2+z^2+w^2 = 1)
+						// so can reconstruct largest component from the other 3.
+						// w = sqrt(1 - x^2 - y^2 - z^2);
+						const square = 1 - sumSquares;
+						quaternion[largestIndex] = Math.sqrt(Math.max(square, 0));
+						splat.rotation = quaternion;
+				} else {
+						const r = packed.rotations.subarray(i * 3, i * 3 + 3);
+						const xyz = [
+							r[0] / 127.5 - 1.0,
+							r[1] / 127.5 - 1.0,
+							r[2] / 127.5 - 1.0
+						];
+						splat.rotation[0] = xyz[0];
+						splat.rotation[1] = xyz[1];
+						splat.rotation[2] = xyz[2];
+						const squaredNorm = xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2];
+						splat.rotation[3] = Math.sqrt(Math.max(0.0, 1.0 - squaredNorm));
+				}
 
         // Splat alpha
         // splat.alpha = invSigmoid(packed.alphas[i] / 255.0);
@@ -274,7 +324,7 @@ function deserializePackedGaussians(buffer) {
         console.error('[SPZ ERROR] deserializePackedGaussians: header not found');
         return null;
     }
-    if (header.version < 1 || header.version > 2) {
+    if (header.version < 1 || header.version > 3) {
         console.error(`[SPZ ERROR] deserializePackedGaussians: version not supported: ${header.version}`);
         return null;
     }
@@ -291,19 +341,27 @@ function deserializePackedGaussians(buffer) {
     const shDim = dimForDegree(header.shDegree);
     const usesFloat16 = header.version === 1;
 
-    // Initialize result object
-    const result = {
-        numPoints,
-        shDegree: header.shDegree,
-        fractionalBits: header.fractionalBits,
-        antialiased: (header.flags & FLAG_ANTIALIASED) !== 0,
-        positions: new Uint8Array(numPoints * 3 * (usesFloat16 ? 2 : 3)),
-        scales: new Uint8Array(numPoints * 3),
-        rotations: new Uint8Array(numPoints * 3),
-        alphas: new Uint8Array(numPoints),
-        colors: new Uint8Array(numPoints * 3),
-        sh: new Uint8Array(numPoints * shDim * 3)
-    };
+		let rotByteLength = numPoints * 3;
+		if (header.version === 3) {
+			rotByteLength = numPoints * 4;
+		}
+
+		console.log("LOADING SPZ: ", numPoints)
+
+		// Initialize result object
+		const result = {
+			numPoints,
+			headerVersion: header.version,
+			shDegree: header.shDegree,
+			fractionalBits: header.fractionalBits,
+			antialiased: (header.flags & FLAG_ANTIALIASED) !== 0,
+			positions: new Uint8Array(numPoints * 3 * (usesFloat16 ? 2 : 3)),
+			scales: new Uint8Array(numPoints * 3),
+			rotations: new Uint8Array(rotByteLength),
+			alphas: new Uint8Array(numPoints),
+			colors: new Uint8Array(numPoints * 3),
+			sh: new Uint8Array(numPoints * shDim * 3)
+		};
 
     // Read data sections
     try {
@@ -333,6 +391,8 @@ function deserializePackedGaussians(buffer) {
             console.error('[SPZ ERROR] deserializePackedGaussians: incorrect buffer size');
             return null;
         }
+
+				console.log("SPZ: CORRECT BUFFER SIZE");
     } catch (error) {
         console.error('[SPZ ERROR] deserializePackedGaussians: read error', error);
         return null;
