@@ -1,11 +1,11 @@
 {
-    "name": "@mkkellogg/gaussian-splats-3d",
+    "name": "@opeixoto/gaussian-splats-3d",
     "repository": {
         "type": "git",
-        "url": "https://github.com/mkkellogg/GaussianSplats3D"
+        "url": "https://github.com/Otavio peixoto1/GaussianSplats3D"
     },
     "version": "0.4.7",
-    "description": "Three.js-based 3D Gaussian splat viewer",
+    "description": "A for of mkkellogg's Three.js-based 3D Gaussian splat viewer",
     "module": "build/gaussian-splats-3d.module.js",
     "main": "build/gaussian-splats-3d.umd.cjs",
     "author": "Mark Kellogg",
@@ -23,7 +23,8 @@
         "fix-styling": "npx stylelint **/*.scss --fix",
         "fix-js": "npx eslint src --fix",
         "lint": "npx eslint 'src/**/*.js' || true",
-        "prettify": "npx prettier --write 'src/**/*.js'"
+        "prettify": "npx prettier --write 'src/**/*.js'",
+        "prepare": "npm run build-library"
     },
     "watch": {
         "build-library": {
