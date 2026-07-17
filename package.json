@@ -24,7 +24,7 @@
         "fix-js": "npx eslint src --fix",
         "lint": "npx eslint 'src/**/*.js' || true",
         "prettify": "npx prettier --write 'src/**/*.js'",
-        "prepare": "npm run build-library"
+        "prepare": "rollup -c"
     },
     "watch": {
         "build-library": {
