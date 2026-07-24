@@ -148,10 +148,10 @@ const unpackedSplatToUncompressedSplat = function() {
 
 // Helper function to check sizes (matching C++ checkSizes function)
 function checkSizes2(packed, numPoints, shDim, usesFloat16) {
-		let rotByteLength = numPoints * 3;
-		if (packed.headerVersion === 3) {
-			rotByteLength = numPoints * 4;
-		}
+    let rotByteLength = numPoints * 3;
+    if (packed.headerVersion === 3) {
+        rotByteLength = numPoints * 4;
+    }
 
     if (packed.positions.length !== numPoints * 3 * (usesFloat16 ? 2 : 3)) return false;
     if (packed.scales.length !== numPoints * 3) return false;
@@ -162,18 +162,7 @@ function checkSizes2(packed, numPoints, shDim, usesFloat16) {
     return true;
 }
 
-function unpackGaussians(packed, outSphericalHarmonicsDegree, directToSplatBuffer, outTarget, outTargetOffset) {
-    outSphericalHarmonicsDegree = Math.min(outSphericalHarmonicsDegree, packed.shDegree);
-    const numPoints = packed.numPoints;
-    const shDim = dimForDegree(packed.shDegree);
-    const usesFloat16 = packed.positions.length === numPoints * 3 * 2;
-
-    // Validate sizes
-    if (!checkSizes2(packed, numPoints, shDim, usesFloat16)) {
-				console.error(`[SPZ: ERROR] Invalid sizes: ${packed}`)
-        return null;
-    }
-
+function unpackGaussiansRange(packed, startIndex, endIndex, outSphericalHarmonicsDegree, usesFloat16, directToSplatBuffer, outTarget, outTargetOffset) {
     const splat = {
         position: [],
         scale: [],
@@ -185,13 +174,13 @@ function unpackGaussians(packed, outSphericalHarmonicsDegree, directToSplatBuffe
 
     let halfData;
     if (usesFloat16) {
-       halfData = new Uint16Array(packed.positions.buffer, packed.positions.byteOffset, numPoints * 3);
+        halfData = new Uint16Array(packed.positions.buffer, packed.positions.byteOffset, numPoints * 3);
     }
     const fullPrecisionPositionScale = 1.0 / (1 << packed.fractionalBits);
     const shCoeffPerChannelPerSplat = dimForDegree(packed.shDegree);
     const SH_C0 = 0.28209479177387814;
 
-    for (let i = 0; i < numPoints; i++) {
+    for (let i = startIndex; i <= endIndex; i++) {
         // Splat position
         if (usesFloat16) {
             // Decode legacy float16 format
@@ -215,62 +204,62 @@ function unpackGaussians(packed, outSphericalHarmonicsDegree, directToSplatBuffe
             splat.scale[j] = Math.exp(packed.scales[i * 3 + j] / 16.0 - 10.0);
         }
 
-				// Splat rotation
-				if (packed.headerVersion === 3) {
-						const maxValue = 1 / Math.sqrt(2)
-						const quaternion = [0, 0, 0, 0];
-						const values = [
-							packed.rotations[i * 4],
-							packed.rotations[i * 4 + 1],
-							packed.rotations[i * 4 + 2],
-							packed.rotations[i * 4 + 3],
-						];
+        // Splat rotation
+        if (packed.headerVersion === 3) {
+            const maxValue = 1 / Math.sqrt(2)
+            const quaternion = [0, 0, 0, 0];
+            const values = [
+                packed.rotations[i * 4],
+                packed.rotations[i * 4 + 1],
+                packed.rotations[i * 4 + 2],
+                packed.rotations[i * 4 + 3],
+            ];
 
-						// all values are packed in 32 bits (10 per each of 3 components + 2 bits of index of larged value)
-						const combinedValues =
-								values[0] + (values[1] << 8) + (values[2] << 16) + (values[3] << 24);
-						// each component value is 9 bits + sign (1 bit)
-						const valueMask = (1 << 9) - 1;
-						// extract index of the largest element. 2 top bits.
-						const largestIndex = combinedValues >>> 30;
-						let remainingValues = combinedValues;
-						let sumSquares = 0;
+            // all values are packed in 32 bits (10 per each of 3 components + 2 bits of index of larged value)
+            const combinedValues =
+                values[0] + (values[1] << 8) + (values[2] << 16) + (values[3] << 24);
+            // each component value is 9 bits + sign (1 bit)
+            const valueMask = (1 << 9) - 1;
+            // extract index of the largest element. 2 top bits.
+            const largestIndex = combinedValues >>> 30;
+            let remainingValues = combinedValues;
+            let sumSquares = 0;
 
-						for (let i = 3; i >= 0; --i) {
-							if (i !== largestIndex) {
-								// extract current value and sign.
-								const value = remainingValues & valueMask;
-								const sign = (remainingValues >>> 9) & 0x1;
-								// each value is represented as 10 bits. Shift to next one.
-								remainingValues = remainingValues >>> 10;
-								// convert to range [0,1] and then to [0, 0.7071]
-								quaternion[i] = maxValue * (value / valueMask);
-								// apply sign.
-								quaternion[i] = sign === 0 ? quaternion[i] : -quaternion[i];
-								// accumulate the sum of squares
-								sumSquares += quaternion[i] * quaternion[i];
-							}
-						}
+            for (let k = 3; k >= 0; --k) {
+                if (k !== largestIndex) {
+                    // extract current value and sign.
+                    const value = remainingValues & valueMask;
+                    const sign = (remainingValues >>> 9) & 0x1;
+                    // each value is represented as 10 bits. Shift to next one.
+                    remainingValues = remainingValues >>> 10;
+                    // convert to range [0,1] and then to [0, 0.7071]
+                    quaternion[k] = maxValue * (value / valueMask);
+                    // apply sign.
+                    quaternion[k] = sign === 0 ? quaternion[k] : -quaternion[k];
+                    // accumulate the sum of squares
+                    sumSquares += quaternion[k] * quaternion[k];
+                }
+            }
 
-						// quartenion length must be 1 (x^2+y^2+z^2+w^2 = 1)
-						// so can reconstruct largest component from the other 3.
-						// w = sqrt(1 - x^2 - y^2 - z^2);
-						const square = 1 - sumSquares;
-						quaternion[largestIndex] = Math.sqrt(Math.max(square, 0));
-						splat.rotation = quaternion;
-				} else {
-						const r = packed.rotations.subarray(i * 3, i * 3 + 3);
-						const xyz = [
-							r[0] / 127.5 - 1.0,
-							r[1] / 127.5 - 1.0,
-							r[2] / 127.5 - 1.0
-						];
-						splat.rotation[0] = xyz[0];
-						splat.rotation[1] = xyz[1];
-						splat.rotation[2] = xyz[2];
-						const squaredNorm = xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2];
-						splat.rotation[3] = Math.sqrt(Math.max(0.0, 1.0 - squaredNorm));
-				}
+            // quartenion length must be 1 (x^2+y^2+z^2+w^2 = 1)
+            // so can reconstruct largest component from the other 3.
+            // w = sqrt(1 - x^2 - y^2 - z^2);
+            const square = 1 - sumSquares;
+            quaternion[largestIndex] = Math.sqrt(Math.max(square, 0));
+            splat.rotation = quaternion;
+        } else {
+            const r = packed.rotations.subarray(i * 3, i * 3 + 3);
+            const xyz = [
+                r[0] / 127.5 - 1.0,
+                r[1] / 127.5 - 1.0,
+                r[2] / 127.5 - 1.0
+            ];
+            splat.rotation[0] = xyz[0];
+            splat.rotation[1] = xyz[1];
+            splat.rotation[2] = xyz[2];
+            const squaredNorm = xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2];
+            splat.rotation[3] = Math.sqrt(Math.max(0.0, 1.0 - squaredNorm));
+        }
 
         // Splat alpha
         // splat.alpha = invSigmoid(packed.alphas[i] / 255.0);
@@ -297,6 +286,30 @@ function unpackGaussians(packed, outSphericalHarmonicsDegree, directToSplatBuffe
             outTarget.addSplat(uncompressedSplat);
         }
     }
+}
+
+function unpackGaussians(packed, outSphericalHarmonicsDegree, directToSplatBuffer, outTarget, outTargetOffset) {
+    outSphericalHarmonicsDegree = Math.min(outSphericalHarmonicsDegree, packed.shDegree);
+    const numPoints = packed.numPoints;
+    const shDim = dimForDegree(packed.shDegree);
+    const usesFloat16 = packed.positions.length === numPoints * 3 * 2;
+
+    // Validate sizes
+    if (!checkSizes2(packed, numPoints, shDim, usesFloat16)) {
+				console.error(`[SPZ: ERROR] Invalid sizes: ${packed}`)
+        return null;
+    }
+
+    unpackGaussiansRange(
+        packed,
+        0,
+        numPoints - 1,
+        outSphericalHarmonicsDegree,
+        usesFloat16,
+        directToSplatBuffer,
+        outTarget,
+        outTargetOffset
+    );
 }
 
 const HEADER_SIZE = 16; // 4 + 4 + 4 + 1 + 1 + 1 + 1 bytes
@@ -341,27 +354,25 @@ function deserializePackedGaussians(buffer) {
     const shDim = dimForDegree(header.shDegree);
     const usesFloat16 = header.version === 1;
 
-		let rotByteLength = numPoints * 3;
-		if (header.version === 3) {
-			rotByteLength = numPoints * 4;
-		}
+    let rotByteLength = numPoints * 3;
+    if (header.version === 3) {
+        rotByteLength = numPoints * 4;
+    }
 
-		console.log("LOADING SPZ: ", numPoints)
-
-		// Initialize result object
-		const result = {
-			numPoints,
-			headerVersion: header.version,
-			shDegree: header.shDegree,
-			fractionalBits: header.fractionalBits,
-			antialiased: (header.flags & FLAG_ANTIALIASED) !== 0,
-			positions: new Uint8Array(numPoints * 3 * (usesFloat16 ? 2 : 3)),
-			scales: new Uint8Array(numPoints * 3),
-			rotations: new Uint8Array(rotByteLength),
-			alphas: new Uint8Array(numPoints),
-			colors: new Uint8Array(numPoints * 3),
-			sh: new Uint8Array(numPoints * shDim * 3)
-		};
+    // Initialize result object
+    const result = {
+        numPoints,
+        headerVersion: header.version,
+        shDegree: header.shDegree,
+        fractionalBits: header.fractionalBits,
+        antialiased: (header.flags & FLAG_ANTIALIASED) !== 0,
+        positions: new Uint8Array(numPoints * 3 * (usesFloat16 ? 2 : 3)),
+        scales: new Uint8Array(numPoints * 3),
+        rotations: new Uint8Array(rotByteLength),
+        alphas: new Uint8Array(numPoints),
+        colors: new Uint8Array(numPoints * 3),
+        sh: new Uint8Array(numPoints * shDim * 3)
+    };
 
     // Read data sections
     try {
@@ -391,8 +402,6 @@ function deserializePackedGaussians(buffer) {
             console.error('[SPZ ERROR] deserializePackedGaussians: incorrect buffer size');
             return null;
         }
-
-				console.log("SPZ: CORRECT BUFFER SIZE");
     } catch (error) {
         console.error('[SPZ ERROR] deserializePackedGaussians: read error', error);
         return null;
@@ -413,17 +422,20 @@ async function loadSpzPacked(compressedData) {
 
 export class SpzLoader {
 
-    static loadFromURL(fileName, onProgress, minimumAlpha, compressionLevel, optimizeSplatData = true,
+    static loadFromURL(fileName, onProgress, progressiveLoadToSplatBuffer, onProgressiveLoadSectionProgress, minimumAlpha, compressionLevel, optimizeSplatData = true,
                        outSphericalHarmonicsDegree = 0, headers, sectionSize, sceneCenter, blockSize, bucketSize) {
         if (onProgress) onProgress(0, '0%', LoaderStatus.Downloading);
         return fetchWithProgress(fileName, onProgress, true, headers).then((fileData) => {
             if (onProgress) onProgress(0, '0%', LoaderStatus.Processing);
-            return SpzLoader.loadFromFileData(fileData, minimumAlpha, compressionLevel, optimizeSplatData,
+            return SpzLoader.loadFromFileData(fileData, progressiveLoadToSplatBuffer, onProgressiveLoadSectionProgress, minimumAlpha, compressionLevel, optimizeSplatData,
                                               outSphericalHarmonicsDegree, sectionSize, sceneCenter, blockSize, bucketSize);
         });
     }
 
-    static async loadFromFileData(spzFileData, minimumAlpha, compressionLevel, optimizeSplatData,
+    /**
+     * Loads the data in DownloadBeforeProcessing mode (default for spz since its a compressed format).
+     */
+    static async loadFromFileData(spzFileData, progressiveLoad, onProgressiveLoadSectionProgress, minimumAlpha, compressionLevel, optimizeSplatData,
                                   outSphericalHarmonicsDegree = 0, sectionSize, sceneCenter, blockSize, bucketSize) {
         await delayedExecute();
         const packed = await loadSpzPacked(spzFileData);
@@ -438,12 +450,96 @@ export class SpzLoader {
                                                                                    blockSize, bucketSize);
             return splatBufferGenerator.generateFromUncompressedSplatArray(splatArray);
         } else {
-            const {
-                splatBuffer,
-                splatBufferDataOffsetBytes
-              } = SplatBuffer.preallocateUncompressed(packed.numPoints, outSphericalHarmonicsDegree);
-            unpackGaussians(packed, outSphericalHarmonicsDegree, true, splatBuffer.bufferData, splatBufferDataOffsetBytes);
-            return splatBuffer;
+            if (!progressiveLoad) {
+                const {
+                    splatBuffer,
+                    splatBufferDataOffsetBytes
+                } = SplatBuffer.preallocateUncompressed(packed.numPoints, outSphericalHarmonicsDegree);
+                unpackGaussians(packed, outSphericalHarmonicsDegree, true, splatBuffer.bufferData, splatBufferDataOffsetBytes);
+                return splatBuffer;
+            } else {
+                const splatCount = packed.numPoints;
+
+                let splatChunkSize = 20000; //TODO: add as optional parameter
+
+                // Make sure that there are at least 2 chunks to fit the loading logic
+                // (there has to be a first build and a final build. See Viewer.downloadAndBuildSingleSplatSceneProgressiveLoad())
+                splatChunkSize = (splatChunkSize < splatCount) ? splatChunkSize : splatCount / 2;
+
+                const shDescriptor = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree];
+                const splatBufferDataOffsetBytes = SplatBuffer.HeaderSizeBytes + SplatBuffer.SectionHeaderSizeBytes;
+                const splatBufferSizeBytes = splatBufferDataOffsetBytes + shDescriptor.BytesPerSplat * splatCount;
+                const outBuffer = new ArrayBuffer(splatBufferSizeBytes);
+                SplatBuffer.writeHeaderToBuffer({
+                    versionMajor: SplatBuffer.CurrentMajorVersion,
+                    versionMinor: SplatBuffer.CurrentMinorVersion,
+                    maxSectionCount: 1,
+                    sectionCount: 1,
+                    maxSplatCount: splatCount,
+                    splatCount: 0,
+                    compressionLevel: 0,
+                    sceneCenter: new THREE.Vector3()
+                }, outBuffer);
+
+                let splatBuffer;
+                let finalChunk = false;
+                let processedBaseSplatCount = 0;
+                let splatIdOffset = 0;
+
+                outSphericalHarmonicsDegree = Math.min(outSphericalHarmonicsDegree, packed.shDegree);
+                const numPoints = packed.numPoints;
+                const shDim = dimForDegree(packed.shDegree);
+                const usesFloat16 = packed.positions.length === numPoints * 3 * 2;
+                // Validate sizes
+                if (!checkSizes2(packed, numPoints, shDim, usesFloat16)) {
+                    console.error(`[SPZ: ERROR] Invalid sizes: ${packed}`)
+                    return null;
+                }
+
+                // Unpack each chunk:
+                while (processedBaseSplatCount < splatCount) {
+                    splatIdOffset = processedBaseSplatCount;
+                    processedBaseSplatCount += splatChunkSize;
+                    if (processedBaseSplatCount >= splatCount) {
+                        finalChunk = true;
+                        processedBaseSplatCount = splatCount;
+                    }
+
+                    unpackGaussiansRange(
+                        packed,
+                        splatIdOffset,
+                        processedBaseSplatCount - 1,
+                        outSphericalHarmonicsDegree,
+                        usesFloat16,
+                        true,
+                        outBuffer,
+                        splatBufferDataOffsetBytes
+                    );
+
+                    if (!splatBuffer) {
+                        SplatBuffer.writeSectionHeaderToBuffer({
+                            maxSplatCount: splatCount,
+                            splatCount: processedBaseSplatCount,
+                            bucketSize: 0,
+                            bucketCount: 0,
+                            bucketBlockSize: 0,
+                            compressionScaleRange: 0,
+                            storageSizeBytes: 0,
+                            fullBucketCount: 0,
+                            partiallyFilledBucketCount: 0,
+                            sphericalHarmonicsDegree: outSphericalHarmonicsDegree
+                        }, 0, outBuffer, SplatBuffer.HeaderSizeBytes);
+                        splatBuffer = new SplatBuffer(outBuffer, false);
+                    }
+                    splatBuffer.updateLoadedCounts(1, processedBaseSplatCount);
+
+                    if (onProgressiveLoadSectionProgress) {
+                        onProgressiveLoadSectionProgress(splatBuffer, finalChunk);
+                    }
+                }
+
+                return splatBuffer;
+            }
         }
     }
 

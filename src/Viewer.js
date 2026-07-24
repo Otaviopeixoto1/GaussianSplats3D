@@ -1063,20 +1063,18 @@ export class Viewer {
     downloadSplatSceneToSplatBuffer(path, splatAlphaRemovalThreshold = 1, onProgress = undefined,
                                     progressiveBuild = false, onSectionBuilt = undefined, format, headers) {
         try {
-            if (format === SceneFormat.Splat || format === SceneFormat.KSplat || format === SceneFormat.Ply) {
-                const optimizeSplatData = progressiveBuild ? false : this.optimizeSplatData;
-                if (format === SceneFormat.Splat) {
-                    return SplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold,
-                                                   this.inMemoryCompressionLevel, optimizeSplatData, headers);
-                } else if (format === SceneFormat.KSplat) {
-                    return KSplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);
-                } else if (format === SceneFormat.Ply) {
-                    return PlyLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold,
-                                                 this.inMemoryCompressionLevel, optimizeSplatData, this.sphericalHarmonicsDegree, headers);
-                }
+            const optimizeSplatData = progressiveBuild ? false : this.optimizeSplatData;
+            if (format === SceneFormat.Splat) {
+                return SplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold,
+                                               this.inMemoryCompressionLevel, optimizeSplatData, headers);
+            } else if (format === SceneFormat.KSplat) {
+                return KSplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);
+            } else if (format === SceneFormat.Ply) {
+                return PlyLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold,
+                                             this.inMemoryCompressionLevel, optimizeSplatData, this.sphericalHarmonicsDegree, headers);
             } else if (format === SceneFormat.Spz) {
-                return SpzLoader.loadFromURL(path, onProgress, splatAlphaRemovalThreshold, this.inMemoryCompressionLevel,
-                                             this.optimizeSplatData, this.sphericalHarmonicsDegree, headers);
+                return SpzLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold, this.inMemoryCompressionLevel,
+                                             optimizeSplatData, this.sphericalHarmonicsDegree, headers);
             }
         } catch (e) {
             throw this.updateError(e, null);
@@ -1086,7 +1084,7 @@ export class Viewer {
     }
 
     static isProgressivelyLoadable(format) {
-        return format === SceneFormat.Splat || format === SceneFormat.KSplat || format === SceneFormat.Ply;
+        return format === SceneFormat.Splat || format === SceneFormat.KSplat || format === SceneFormat.Ply || format === SceneFormat.Spz;
     }
 
     /**
