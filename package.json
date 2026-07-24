@@ -84,6 +84,7 @@
         "three": ">=0.160.0"
     },
     "files": [
+        "index.d.ts",
         "build/gaussian-splats-3d.umd.cjs",
         "build/gaussian-splats-3d.umd.cjs.map",
         "build/gaussian-splats-3d.module.js",
