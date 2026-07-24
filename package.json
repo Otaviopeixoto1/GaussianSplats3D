@@ -9,6 +9,18 @@
     "module": "build/gaussian-splats-3d.module.js",
     "main": "build/gaussian-splats-3d.umd.cjs",
     "types": "index.d.ts",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./index.d.ts",
+          "default": "./build/gaussian-splats-3d.module.js"
+        },
+        "require": {
+          "types": "./index.d.ts",
+          "default": "./build/gaussian-splats-3d.umd.cjs"
+        }
+      }
+    },
     "author": "Mark Kellogg",
     "license": "MIT",
     "type": "module",

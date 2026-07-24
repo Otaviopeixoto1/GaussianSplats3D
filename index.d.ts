@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Group } from 'three';
 
 
 export class AbortablePromise<T = any> {
@@ -120,7 +120,7 @@ export class Viewer {
     public dispose(): Promise<void>;
 }
 
-export class DropInViewer extends THREE.Group {
+export class DropInViewer extends Group {
     constructor(options: Partial<ViewerOptions>);
     public addSplatScene(path: string, options: Partial<SplatSceneOptions>): AbortablePromise;
     public dispose(): Promise<void>;
