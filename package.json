@@ -8,6 +8,7 @@
     "description": "A for of mkkellogg's Three.js-based 3D Gaussian splat viewer",
     "module": "build/gaussian-splats-3d.module.js",
     "main": "build/gaussian-splats-3d.umd.cjs",
+    "types": "index.d.ts",
     "author": "Mark Kellogg",
     "license": "MIT",
     "type": "module",
