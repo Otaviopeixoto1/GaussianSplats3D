@@ -1,4 +1,4 @@
-import { Group } from 'three';
+import { Group, Object3D, Camera, WebGLRenderer } from 'three';
 
 
 export class AbortablePromise<T = any> {
@@ -61,8 +61,8 @@ export interface ViewerOptions {
     initialCameraPosition: [number, number, number];
     initialCameraLookAt: [number, number, number];
     selfDrivenMode: boolean;
-    renderer: THREE.WebGLRenderer;
-    camera: THREE.Camera;
+    renderer: WebGLRenderer;
+    camera: Camera;
     useBuiltInControls: boolean;
     ignoreDevicePixelRatio: boolean;
     gpuAcceleratedSort: boolean;
@@ -114,14 +114,31 @@ export interface SplatSceneOptions {
     headers: Record<string, string | string[]>;
 }
 
+export class SplatBuffer {
+    bufferData: ArrayBuffer | Uint8Array
+}
+
+
+export class SplatScene extends Object3D {
+    public splatBuffer: SplatBuffer;
+}
+
+
 export class Viewer {
     constructor(options: Partial<ViewerOptions>);
     public addSplatScene(path: string, options: Partial<SplatSceneOptions>): AbortablePromise;
+    public getSplatScene(sceneIndex: number): SplatScene;
     public dispose(): Promise<void>;
 }
 
 export class DropInViewer extends Group {
     constructor(options: Partial<ViewerOptions>);
     public addSplatScene(path: string, options: Partial<SplatSceneOptions>): AbortablePromise;
+    public getSplatScene(sceneIndex: number): SplatScene;
     public dispose(): Promise<void>;
+}
+
+
+export class KSplatLoader {
+    public static downloadFile(splatBuffer: SplatBuffer, fileName: string): void;
 }
