@@ -1,3 +1,4 @@
+/* eslint-disable */
 import * as THREE from 'three';
 import { OrbitControls } from './OrbitControls.js';
 import { PlyLoader } from './loaders/ply/PlyLoader.js';
@@ -26,6 +27,7 @@ import { RenderMode } from './RenderMode.js';
 import { LogLevel } from './LogLevel.js';
 import { SceneRevealMode } from './SceneRevealMode.js';
 import { SplatRenderMode } from './SplatRenderMode.js';
+import {BinaryHeap} from "../util/binary-heap.js";
 
 const THREE_CAMERA_FOV = 50;
 const MINIMUM_DISTANCE_TO_NEW_FOCAL_POINT = .75;
@@ -286,6 +288,11 @@ export class Viewer {
         this.disposed = false;
         this.disposePromise = null;
         if (!this.dropInMode) this.init();
+
+        //TODO: Add to the options object
+        // LOD SELECTION:
+        this.minimumNodePixelSize = 150;
+        this.pointBudget = 1000000;
     }
 
     createSplatMesh() {
@@ -1633,14 +1640,19 @@ export class Viewer {
                 Viewer.setCameraPositionFromZoom(this.camera, this.camera, this.controls);
             }
         }
+        performance.mark("sort-started");
         this.runSplatSort();
+        performance.mark("update-renderer-started");
         this.updateForRendererSizeChanges();
+        performance.mark("update-splatmesh-started");
         this.updateSplatMesh();
+        performance.mark("update-rest-started");
         this.updateMeshCursor();
         this.updateFPS();
         this.timingSensitiveUpdates();
         this.updateInfoPanel();
         this.updateControlPlane();
+        performance.mark("update-finished");
     }
 
     updateForDropInMode(renderer, camera) {
@@ -1969,83 +1981,30 @@ export class Viewer {
      */
     gatherSceneNodesForSort = function() {
 
-        const nodeRenderList = [];
         let allSplatsSortBuffer = null;
-        const tempVectorYZ = new THREE.Vector3();
-        const tempVectorXZ = new THREE.Vector3();
-        const tempVector = new THREE.Vector3();
-        const modelView = new THREE.Matrix4();
         const baseModelView = new THREE.Matrix4();
-        const sceneTransform = new THREE.Matrix4();
-        const renderDimensions = new THREE.Vector3();
-        const forward = new THREE.Vector3(0, 0, -1);
-
-        const tempMax = new THREE.Vector3();
-        const nodeSize = (node) => {
-            return tempMax.copy(node.max).sub(node.min).length();
-        };
 
         return function(gatherAllNodes = false) {
 
-            this.getRenderDimensions(renderDimensions);
-            const cameraFocalLength = (renderDimensions.y / 2.0) / Math.tan(this.camera.fov / 2.0 * THREE.MathUtils.DEG2RAD);
-            const fovXOver2 = Math.atan(renderDimensions.x / 2.0 / cameraFocalLength);
-            const fovYOver2 = Math.atan(renderDimensions.y / 2.0 / cameraFocalLength);
-            const cosFovXOver2 = Math.cos(fovXOver2);
-            const cosFovYOver2 = Math.cos(fovYOver2);
-
             const splatTree = this.splatMesh.getSplatTree();
-
             if (splatTree) {
                 baseModelView.copy(this.camera.matrixWorld).invert();
                 if (!this.splatMesh.dynamicMode) baseModelView.multiply(this.splatMesh.matrixWorld);
 
-                let nodeRenderCount = 0;
-                let splatRenderCount = 0;
+                //
+                // TODO: Move this cull logic function
+                //
+                const res = this.gatherVisibleNodes(splatTree.subTrees, baseModelView, this.camera.projectionMatrix, gatherAllNodes, false);
+                const nodeRenderList = res.nodes;
+                const splatRenderCount = res.splatCount;
 
-                for (let s = 0; s < splatTree.subTrees.length; s++) {
-                    const subTree = splatTree.subTrees[s];
-                    modelView.copy(baseModelView);
-                    if (this.splatMesh.dynamicMode) {
-                        this.splatMesh.getSceneTransform(s, sceneTransform);
-                        modelView.multiply(sceneTransform);
-                    }
-                    const nodeCount = subTree.nodesWithIndexes.length;
-                    for (let i = 0; i < nodeCount; i++) {
-                        const node = subTree.nodesWithIndexes[i];
-                        if (!node.data || !node.data.indexes || node.data.indexes.length === 0) continue;
-                        tempVector.copy(node.center).applyMatrix4(modelView);
-
-                        const distanceToNode = tempVector.length();
-                        tempVector.normalize();
-
-                        tempVectorYZ.copy(tempVector).setX(0).normalize();
-                        tempVectorXZ.copy(tempVector).setY(0).normalize();
-
-                        const cameraAngleXZDot = forward.dot(tempVectorXZ);
-                        const cameraAngleYZDot = forward.dot(tempVectorYZ);
-
-                        const ns = nodeSize(node);
-                        const outOfFovY = cameraAngleYZDot < (cosFovYOver2 - .6);
-                        const outOfFovX = cameraAngleXZDot < (cosFovXOver2 - .6);
-                        if (!gatherAllNodes && ((outOfFovX || outOfFovY) && distanceToNode > ns)) {
-                            continue;
-                        }
-                        splatRenderCount += node.data.indexes.length;
-                        nodeRenderList[nodeRenderCount] = node;
-                        node.data.distanceToNode = distanceToNode;
-                        nodeRenderCount++;
-                    }
-                }
-
-                nodeRenderList.length = nodeRenderCount;
                 nodeRenderList.sort((a, b) => {
                     if (a.data.distanceToNode < b.data.distanceToNode) return -1;
                     else return 1;
                 });
 
                 let currentByteOffset = splatRenderCount * Constants.BytesPerInt;
-                for (let i = 0; i < nodeRenderCount; i++) {
+                for (let i = 0; i < nodeRenderList.length; i++) {
                     const node = nodeRenderList[i];
                     const windowSizeInts = node.data.indexes.length;
                     const windowSizeBytes = windowSizeInts * Constants.BytesPerInt;
@@ -2076,6 +2035,288 @@ export class Viewer {
         };
 
     }();
+
+    gatherVisibleNodes(subTrees, baseModelViewMatrix, projMatrix, gatherAllNodes, isOrthographic) {
+        performance.mark("gather-visible-started");
+        const nodeRenderList = [];
+
+        let nodeRenderCount = 0;
+        let splatRenderCount = 0;
+
+        const renderDimensions = new THREE.Vector3();
+        this.getRenderDimensions(renderDimensions);
+
+        const sceneTransform = new THREE.Matrix4();
+        const modelView = new THREE.Matrix4();
+
+        const boundingSphere = new THREE.Sphere();
+
+
+        //
+        // From potree: updateVisibleStructures
+        //
+        let frustums = [];
+        let camObjPositions = [];
+        let priorityQueue = new BinaryHeap(function (x) { return 1 / x.weight; });
+
+        for (let s = 0; s < subTrees.length; s++) {
+            const subTree = subTrees[s];
+
+            modelView.copy(baseModelViewMatrix);
+            if (this.splatMesh.dynamicMode) {
+                this.splatMesh.getSceneTransform(s, sceneTransform);
+                modelView.multiply(sceneTransform);
+            }
+
+            // if (!pointcloud.initialized()) {
+            //     continue;
+            // }
+
+            // pointcloud.numVisibleNodes = 0;
+            // pointcloud.numVisiblePoints = 0;
+            // pointcloud.deepestVisibleLevel = 0;
+            // pointcloud.visibleNodes = [];
+            // pointcloud.visibleGeometry = [];
+
+            // Frustum in object space
+            let frustum = new THREE.Frustum();
+
+            let fm = new THREE.Matrix4().multiply(projMatrix).multiply(modelView);
+            frustum.setFromProjectionMatrix(fm);
+            frustums.push(frustum);
+
+            // Camera position in object space
+            let camMatrixObject = modelView.clone().invert();
+            let camObjPos = new THREE.Vector3().setFromMatrixPosition(camMatrixObject);
+            camObjPositions.push(camObjPos);
+
+
+            if (subTree.rootNode !== null) {
+                const newElement = {
+                    subTreeId: s,
+                    node: subTree.rootNode,
+                    weight: Number.MAX_VALUE
+                };
+                priorityQueue.push(newElement);
+            }
+
+            // if (!pointcloud.root) {
+            //     console.error("PotreeScene: PointCloud Root not found.");
+            // }
+            //
+            // if (pointcloud.root!.isTreeNode()) {
+            //     pointcloud.hideDescendants((pointcloud.root! as LoadedPointCloudNode));
+            // }
+        }
+
+
+        let numVisiblePoints = 0;
+        //
+        // TODO: Traverse the tree using the binary heap
+        //
+        while (priorityQueue.size() > 0) {
+            let element = priorityQueue.pop();
+            let node = element.node;
+            let parent = element.parent;
+
+            let box = node.boundingBox;
+            let frustum = frustums[element.subTreeId];
+            let camObjPos = camObjPositions[element.subTreeId];
+
+            let insideFrustum = frustum.intersectsBox(box);
+            let maxLevel = Infinity; //pointcloud.maxLevel || Infinity;
+            let level = node.depth;
+
+            const numPointsOnNode = node.getNumPoints();
+
+            if (numVisiblePoints + numPointsOnNode > this.pointBudget) {
+                break;
+            }
+
+            let visible = level <= 2 || insideFrustum;
+            visible = visible && !(numVisiblePoints + numPointsOnNode > this.pointBudget);
+            // visible = visible && !(numVisiblePointsInPointClouds.get(pointcloud)! + node.getNumPoints() > pointcloud.pointBudget);
+            visible = visible && level < maxLevel;
+
+            //
+            // TODO: Clipbox culling
+            //
+            // let clippingVolumes = pointcloud.material.getClippingVolumes();
+            // if(clippingVolumes.length > 0){
+            //
+            //     let numIntersecting = 0;
+            //     let numIntersectionVolumes = 0;
+            //
+            //     for(let clipVolume of clippingVolumes){
+            //         if (!(clipVolume.volume instanceof ClipBox) && !(clipVolume.volume instanceof ClippingProfile)) {
+            //             continue;
+            //         }
+            //
+            //         let pcWorldInverse = pointcloud.matrixWorld.clone().invert();
+            //         let toPCObject = pcWorldInverse.multiply(clipVolume.volume.matrixWorld);
+            //
+            //         let px = new THREE.Vector3(+0.5, 0, 0).applyMatrix4(pcWorldInverse);
+            //         let nx = new THREE.Vector3(-0.5, 0, 0).applyMatrix4(pcWorldInverse);
+            //         let py = new THREE.Vector3(0, +0.5, 0).applyMatrix4(pcWorldInverse);
+            //         let ny = new THREE.Vector3(0, -0.5, 0).applyMatrix4(pcWorldInverse);
+            //         let pz = new THREE.Vector3(0, 0, +0.5).applyMatrix4(pcWorldInverse);
+            //         let nz = new THREE.Vector3(0, 0, -0.5).applyMatrix4(pcWorldInverse);
+            //
+            //         let pxN = new THREE.Vector3().subVectors(nx, px).normalize();
+            //         let nxN = pxN.clone().multiplyScalar(-1);
+            //         let pyN = new THREE.Vector3().subVectors(ny, py).normalize();
+            //         let nyN = pyN.clone().multiplyScalar(-1);
+            //         let pzN = new THREE.Vector3().subVectors(nz, pz).normalize();
+            //         let nzN = pzN.clone().multiplyScalar(-1);
+            //
+            //         let pxPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(pxN, px);
+            //         let nxPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(nxN, nx);
+            //         let pyPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(pyN, py);
+            //         let nyPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(nyN, ny);
+            //         let pzPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(pzN, pz);
+            //         let nzPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(nzN, nz);
+            //
+            //         let frustum = new THREE.Frustum(pxPlane, nxPlane, pyPlane, nyPlane, pzPlane, nzPlane);
+            //         let intersects = frustum.intersectsBox(box);
+            //
+            //         if(intersects){
+            //             numIntersecting++;
+            //         }
+            //         numIntersectionVolumes++;
+            //     }
+            //
+            //     let insideAny = numIntersecting > 0;
+            //     let insideAll = numIntersecting === numIntersectionVolumes;
+            //
+            //     if(pointcloud.material.clipTask === ClipTask.SHOW_INSIDE){
+            //         if(pointcloud.material.clipMethod === ClipMethod.INSIDE_ANY && insideAny){
+            //             //node.debug = true
+            //         }else if(pointcloud.material.clipMethod === ClipMethod.INSIDE_ALL && insideAll){
+            //             //node.debug = true;
+            //         }else{
+            //             visible = false;
+            //         }
+            //     } else if(pointcloud.material.clipTask === ClipTask.SHOW_OUTSIDE){
+            //     }
+            // }
+
+            if (!visible) {
+                continue;
+            }
+
+            numVisiblePoints += numPointsOnNode;
+
+            // tempVector.copy(node.center).applyMatrix4(MVMatrix);
+            // const distanceToNode = tempVector.length();
+
+            let dx = camObjPos.x - node.center.x;
+            let dy = camObjPos.y - node.center.y;
+            let dz = camObjPos.z - node.center.z;
+
+            let dd = dx * dx + dy * dy + dz * dz;
+            let distanceToNode = Math.sqrt(dd);
+
+
+            splatRenderCount += numPointsOnNode;
+            nodeRenderList[nodeRenderCount] = node;
+            node.data.distanceToNode = distanceToNode;
+            nodeRenderCount++;
+
+            // add child nodes to priorityQueue
+            let children = node.children;
+            for (let i = 0; i < children.length; i++) {
+                let child = children[i];
+
+                let weight = 0;
+                if(!isOrthographic){
+                    child.boundingBox.getBoundingSphere(boundingSphere);
+                    // let center = boundingSphere.center;
+                    //
+                    // let dx = camObjPos.x - center.x;
+                    // let dy = camObjPos.y - center.y;
+                    // let dz = camObjPos.z - center.z;
+
+                    // let dd = dx * dx + dy * dy + dz * dz;
+                    // let distance = Math.sqrt(dd);
+                    let radius = boundingSphere.radius;
+
+                    let fov = (this.camera.fov * Math.PI) / 180;
+                    let slope = Math.tan(fov / 2);
+                    let projFactor = (0.5 * renderDimensions.y) / (slope * distanceToNode);
+                    let screenPixelRadius = radius * projFactor;
+
+                    if(screenPixelRadius < this.minimumNodePixelSize){
+                        continue;
+                    }
+
+                    weight = screenPixelRadius;
+
+                    if(distanceToNode - radius < 0) {
+                        weight = Number.MAX_VALUE;
+                    }
+                } else {
+                    // TODO: improve orthographic projection support
+                    let bb = child.boundingBox;
+                    // let distance = child.getBoundingSphere().center.distanceTo(camObjPos);
+                    let diagonal = bb.max.clone().sub(bb.min).length();
+                    //weight = diagonal / distance;
+
+                    weight = diagonal;
+                }
+
+                const newElement = {
+                    subTreeId: element.subTreeId,
+                    node: child,
+                    parent: node,
+                    weight: weight
+                };
+                priorityQueue.push(newElement);
+            }
+        }
+
+        // for (let s = 0; s < subTrees.length; s++) {
+        //     const subTree = subTrees[s];
+            // modelView.copy(baseModelViewMatrix);
+            // if (this.splatMesh.dynamicMode) {
+            //     this.splatMesh.getSceneTransform(s, sceneTransform);
+            //     modelView.multiply(sceneTransform);
+            // }
+
+            // const nodeCount = subTree.nodesWithIndexes.length;
+            // for (let i = 0; i < nodeCount; i++) {
+            //     const node = subTree.nodesWithIndexes[i];
+            //     if (!node.data || !node.data.indexes || node.data.indexes.length === 0) continue;
+            //     tempVector.copy(node.center).applyMatrix4(modelView);
+            //
+            //     const distanceToNode = tempVector.length();
+            //     tempVector.normalize();
+            //
+            //     tempVectorYZ.copy(tempVector).setX(0).normalize();
+            //     tempVectorXZ.copy(tempVector).setY(0).normalize();
+            //
+            //     const cameraAngleXZDot = forward.dot(tempVectorXZ);
+            //     const cameraAngleYZDot = forward.dot(tempVectorYZ);
+            //
+            //     const ns = nodeSize(node);
+            //     const outOfFovY = cameraAngleYZDot < (cosFovYOver2 - .6);
+            //     const outOfFovX = cameraAngleXZDot < (cosFovXOver2 - .6);
+            //     if (!gatherAllNodes && ((outOfFovX || outOfFovY) && distanceToNode > ns)) {
+            //         continue;
+            //     }
+            //     splatRenderCount += node.data.indexes.length;
+            //     nodeRenderList[nodeRenderCount] = node;
+            //     node.data.distanceToNode = distanceToNode;
+            //     nodeRenderCount++;
+            // }
+        // }
+
+        performance.mark("gather-visible-ended");
+        nodeRenderList.length = nodeRenderCount;
+        return {
+            'nodes': nodeRenderList,
+            'splatCount': splatRenderCount
+        }
+    }
 
     getSplatMesh() {
         return this.splatMesh;

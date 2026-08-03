@@ -1226,6 +1226,7 @@ export class SplatMesh extends THREE.Mesh {
      *                                  every splat.
      */
     updateRenderIndexes(globalIndexes, renderSplatCount) {
+        console.log("Splats Rendererd", renderSplatCount);
         const geometry = this.geometry;
         geometry.attributes.splatIndex.set(globalIndexes);
         geometry.attributes.splatIndex.needsUpdate = true;

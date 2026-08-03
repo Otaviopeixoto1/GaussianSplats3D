@@ -1,5 +1,7 @@
+/* eslint-disable */
 import * as THREE from 'three';
 import { delayedExecute } from '../Util.js';
+
 
 class SplatTreeNode {
 
@@ -14,8 +16,16 @@ class SplatTreeNode {
         this.children = [];
         this.data = null;
         this.id = id || SplatTreeNode.idGen++;
+        this.sampled = false;
     }
 
+    getNumPoints() {
+        if (!this.data || !this.data.indexes) {
+            return 0;
+        }
+
+        return this.data.indexes.length;
+    }
 }
 
 class SplatSubTree {
@@ -66,6 +76,10 @@ class SplatSubTree {
                 visitLeavesFromNode(child, visitFunc);
             }
         };
+
+        /**
+         * TODO: Refactor. Do the traversal at rendering/sorting time
+         */
 
         convertedSubTree.nodesWithIndexes = [];
         visitLeavesFromNode(convertedSubTree.rootNode, (node) => {
@@ -181,6 +195,10 @@ function createSplatTreeWorker(self) {
                            [nodeCenter[0], nodeCenter[1], nodeCenter[2] + halfDimensions[2]]),
         ];
 
+        /**
+         * TODO: Use potree strategy for building the hierarchy
+         */
+
         const splatCounts = [];
         const baseIndexes = [];
         for (let i = 0; i < childrenBounds.length; i++) {
@@ -217,6 +235,226 @@ function createSplatTreeWorker(self) {
         }
         return;
     };
+
+    class Point {
+        constructor(x, y, z, pointId, childId) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.pointId = pointId;
+            this.childId = childId;
+        }
+    }
+
+    function poissonSample(treeNode, sceneCenters, indexToCenter, baseSpacing) {
+
+        const traversePost = (node, callback) => {
+            for (const child of node.children) {
+                if (child !== null && !child.sampled) {
+                    traversePost(child, callback);
+                }
+            }
+            callback(node);
+        };
+
+        const sampleNode = (node) => {
+            const isLeaf = node.children.length === 0;
+            if (isLeaf) {
+                return false;
+            }
+
+
+            const points = [];
+            node.sampled = true;
+
+            const acceptedChildPointFlags = [];
+            let numRejectedPerChild = [0, 0, 0, 0, 0, 0, 0, 0];
+            let numAccepted = 0;
+
+            // Sample from children
+            for (let childIndex = 0; childIndex < 8; childIndex++) {
+                const child = node.children[childIndex];
+
+                if (!child) {
+                    acceptedChildPointFlags.push([]);
+                    numRejectedPerChild[childIndex] = 0;
+
+                    continue;
+                }
+
+                if (!child.data) {
+                    continue;
+                }
+
+                const numPoints = child.data.indexes.length;
+                const acceptedFlags = new Int8Array(numPoints);
+                acceptedChildPointFlags.push(acceptedFlags);
+
+                for (let i = 0; i < numPoints; i++) {
+                    const splatGlobalIndex = child.data.indexes[i];
+                    const centerBase = indexToCenter[splatGlobalIndex];
+                    const x = sceneCenters[centerBase];
+                    const y = sceneCenters[centerBase + 1];
+                    const z = sceneCenters[centerBase + 2];
+
+                    points.push(new Point(x, y, z, i, childIndex));
+                }
+            }
+
+            const squaredDistance = (a, b) => {
+                const dx = a.x - b.x;
+                const dy = a.y - b.y;
+                const dz = a.z - b.z;
+
+                return dx * dx + dy * dy + dz * dz;
+            };
+
+            let dbgNumAccepted = 0;
+            const dbgAccepted = [];
+            const spacing = baseSpacing / Math.pow(2.0, node.depth);
+            const squaredSpacing = spacing * spacing;
+            const center = {
+                x: node.center[0],
+                y: node.center[1],
+                z: node.center[2],
+            };
+
+            const checkAccept = (candidate) => {
+                const cx = candidate.x - center.x;
+                const cy = candidate.y - center.y;
+                const cz = candidate.z - center.z;
+                const cdd = cx * cx + cy * cy + cz * cz;
+                const cd = Math.sqrt(cdd);
+                const limit = (cd - spacing);
+                const limitSquared = limit * limit;
+
+                let j = 0;
+
+                for (let i = dbgNumAccepted - 1; i >= 0; i--) {
+
+                    const point = dbgAccepted[i];
+
+                    // check distance to center
+                    const px = point.x - center.x;
+                    const py = point.y - center.y;
+                    const pz = point.z - center.z;
+                    const pdd = px * px + py * py + pz * pz;
+
+                    // stop when differences to center between candidate and accepted exceeds the spacing
+                    // any other previously accepted point will be even closer to the center.
+                    if (pdd < limitSquared) {
+                        return true;
+                    }
+
+                    const dd = squaredDistance(point, candidate);
+
+                    if (dd < squaredSpacing) {
+                        return false;
+                    }
+
+                    j++;
+
+                    // also put a limit at x distance checks
+                    if (j > 10000) {
+                        return true;
+                    }
+                }
+
+                return true;
+            };
+
+            points.sort((a, b) => {
+                const ax = a.x - center.x;
+                const ay = a.y - center.y;
+                const az = a.z - center.z;
+                const add = ax * ax + ay * ay + az * az;
+
+                const bx = b.x - center.x;
+                const by = b.y - center.y;
+                const bz = b.z - center.z;
+                const bdd = bx * bx + by * by + bz * bz;
+
+                return add - bdd;
+            });
+
+            for (const point of points) {
+                const isAccepted = checkAccept(point);
+
+                if (isAccepted) {
+                    dbgAccepted[dbgNumAccepted] = point;
+                    dbgNumAccepted++;
+                    numAccepted++;
+                } else {
+                    numRejectedPerChild[point.childId]++;
+                }
+
+                acceptedChildPointFlags[point.childId][point.pointId] = isAccepted ? 1 : 0;
+            }
+            // console.log(acceptedChildPointFlags);
+            // console.log(numRejectedPerChild)
+            // console.log("NUM ACCEPTED: ", numAccepted);
+            const accepted = [];
+            let emptyChildren = 0;
+            for (let childIndex = 0; childIndex < 8; childIndex++) {
+                const child = node.children[childIndex];
+
+                if (!child) {
+                    continue;
+                }
+
+                const numRejected = numRejectedPerChild[childIndex];
+                const acceptedFlags = acceptedChildPointFlags[childIndex];
+                const rejected = []
+                const numPoints = child.data.indexes.length;
+
+                for (let i = 0; i < numPoints; i++) {
+                    const isAccepted = acceptedFlags[i] > 0;
+                    const splatGlobalIndex = child.data.indexes[i];
+
+                    if (isAccepted) {
+                        accepted.push(splatGlobalIndex);
+                    } else {
+                        rejected.push(splatGlobalIndex);
+                    }
+                }
+
+                if (numRejected === 0 && child.children.length === 0) {
+                    //node.children[childIndex] = null;
+                    // console.log("LEAF CHILD LEFT WITH 0 POINTS")
+                    child.data = null;
+                    emptyChildren++;
+                } if (numRejected > 0) {
+                    child.data = {
+                        'indexes': rejected
+                    };
+                } else if(numRejected === 0) {
+                    // console.log("INTERNAL CHILD HAS 0 POINTS")
+                    // the parent has taken all points from this child,
+                    // so make this child an empty inner node.
+                    // Otherwise, the hierarchy file will claim that
+                    // this node has points but because it doesn't have any,
+                    // decompressing the nonexistent point buffer fails
+                    // https://github.com/potree/potree/issues/1125
+                    child.data = {
+                        'indexes': []
+                    };
+                    emptyChildren++;
+                }
+            }
+
+            if (emptyChildren === 8) {
+                node.children = [];
+            }
+
+            node.data = {
+                'indexes': accepted
+            };
+
+            return true;
+        }
+
+        traversePost(treeNode, sampleNode);
+    }
 
     const buildSubTree = (sceneCenters, maxDepth, maxCentersPerNode) => {
 
@@ -264,6 +502,9 @@ function createSplatTreeWorker(self) {
             const subTree = buildSubTree(sceneCenters, maxDepth, maxCentersPerNode);
             subTrees.push(subTree);
             processSplatTreeNode(subTree, subTree.rootNode, indexToCenter, sceneCenters);
+
+            const baseSpacing = (subTree.rootNode.max[0] - subTree.rootNode.min[0]) / 128.0;
+            poissonSample(subTree.rootNode, sceneCenters, indexToCenter, baseSpacing);
         }
         self.postMessage({
             'subTrees': subTrees
