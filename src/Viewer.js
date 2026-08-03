@@ -2128,7 +2128,6 @@ export class Viewer {
             const numPointsOnNode = node.getNumPoints();
 
             if (numVisiblePoints + numPointsOnNode > this.pointBudget) {
-                console.warn("OOM")
                 break;
             }
 
@@ -2136,8 +2135,6 @@ export class Viewer {
             visible = visible && !(numVisiblePoints + numPointsOnNode > this.pointBudget);
             // visible = visible && !(numVisiblePointsInPointClouds.get(pointcloud)! + node.getNumPoints() > pointcloud.pointBudget);
             visible = visible && level < maxLevel;
-
-            visible = true;
 
             //
             // TODO: Clipbox culling
@@ -2277,42 +2274,6 @@ export class Viewer {
                 priorityQueue.push(newElement);
             }
         }
-
-        // for (let s = 0; s < subTrees.length; s++) {
-        //     const subTree = subTrees[s];
-            // modelView.copy(baseModelViewMatrix);
-            // if (this.splatMesh.dynamicMode) {
-            //     this.splatMesh.getSceneTransform(s, sceneTransform);
-            //     modelView.multiply(sceneTransform);
-            // }
-
-            // const nodeCount = subTree.nodesWithIndexes.length;
-            // for (let i = 0; i < nodeCount; i++) {
-            //     const node = subTree.nodesWithIndexes[i];
-            //     if (!node.data || !node.data.indexes || node.data.indexes.length === 0) continue;
-            //     tempVector.copy(node.center).applyMatrix4(modelView);
-            //
-            //     const distanceToNode = tempVector.length();
-            //     tempVector.normalize();
-            //
-            //     tempVectorYZ.copy(tempVector).setX(0).normalize();
-            //     tempVectorXZ.copy(tempVector).setY(0).normalize();
-            //
-            //     const cameraAngleXZDot = forward.dot(tempVectorXZ);
-            //     const cameraAngleYZDot = forward.dot(tempVectorYZ);
-            //
-            //     const ns = nodeSize(node);
-            //     const outOfFovY = cameraAngleYZDot < (cosFovYOver2 - .6);
-            //     const outOfFovX = cameraAngleXZDot < (cosFovXOver2 - .6);
-            //     if (!gatherAllNodes && ((outOfFovX || outOfFovY) && distanceToNode > ns)) {
-            //         continue;
-            //     }
-            //     splatRenderCount += node.data.indexes.length;
-            //     nodeRenderList[nodeRenderCount] = node;
-            //     node.data.distanceToNode = distanceToNode;
-            //     nodeRenderCount++;
-            // }
-        // }
 
         performance.mark("gather-visible-ended");
         nodeRenderList.length = nodeRenderCount;

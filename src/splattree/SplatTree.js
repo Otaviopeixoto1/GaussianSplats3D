@@ -452,7 +452,7 @@ function createSplatTreeWorker(self) {
                 }
 
                 if (numGrandChildren === 0) {
-                    console.warn("PARENT took all data from ALL children", node.name)
+                    // console.warn("PARENT took all data from ALL children", node.name)
                     node.children = [];
                 }
             }
