@@ -87,6 +87,8 @@ export interface ViewerOptions {
     freeIntermediateSplatData: boolean;
     splatRenderMode: SplatRenderMode;
     sceneFadeInRateMultiplier: number;
+    minimumNodePixelSize: number;
+    splatBudget: number;
 }
 
 export enum SceneFormat {

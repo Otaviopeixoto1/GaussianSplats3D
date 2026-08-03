@@ -289,10 +289,8 @@ export class Viewer {
         this.disposePromise = null;
         if (!this.dropInMode) this.init();
 
-        //TODO: Add to the options object
-        // LOD SELECTION:
-        this.minimumNodePixelSize = 150;
-        this.pointBudget = 1000000;
+        this.minimumNodePixelSize = options.minimumNodePixelSize || 30;
+        this.pointBudget = options.splatBudget || 1000000;
     }
 
     createSplatMesh() {
@@ -2130,6 +2128,7 @@ export class Viewer {
             const numPointsOnNode = node.getNumPoints();
 
             if (numVisiblePoints + numPointsOnNode > this.pointBudget) {
+                console.warn("OOM")
                 break;
             }
 
@@ -2137,6 +2136,8 @@ export class Viewer {
             visible = visible && !(numVisiblePoints + numPointsOnNode > this.pointBudget);
             // visible = visible && !(numVisiblePointsInPointClouds.get(pointcloud)! + node.getNumPoints() > pointcloud.pointBudget);
             visible = visible && level < maxLevel;
+
+            visible = true;
 
             //
             // TODO: Clipbox culling
@@ -2217,10 +2218,13 @@ export class Viewer {
             let distanceToNode = Math.sqrt(dd);
 
 
-            splatRenderCount += numPointsOnNode;
-            nodeRenderList[nodeRenderCount] = node;
-            node.data.distanceToNode = distanceToNode;
-            nodeRenderCount++;
+            if (node.data) {
+                splatRenderCount += numPointsOnNode;
+                nodeRenderList[nodeRenderCount] = node;
+                node.data.distanceToNode = distanceToNode;
+                nodeRenderCount++;
+            }
+
 
             // add child nodes to priorityQueue
             let children = node.children;
