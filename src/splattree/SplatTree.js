@@ -248,10 +248,13 @@ function createSplatTreeWorker(self) {
 
     function poissonSample(treeNode, sceneCenters, indexToCenter, baseSpacing) {
 
-        const traversePost = (node, callback) => {
-            for (const child of node.children) {
+        const traversePost = (node, callback, nodeName = "r") => {
+            node.name = nodeName;
+            const childCount = node.children.length ?? 0;
+            for (let i = 0; i < childCount; i++) {
+                const child = node.children[i];
                 if (child !== null && !child.sampled) {
-                    traversePost(child, callback);
+                    traversePost(child, callback, nodeName + i);
                 }
             }
             callback(node);
@@ -443,7 +446,15 @@ function createSplatTreeWorker(self) {
             }
 
             if (emptyChildren === 8) {
-                node.children = [];
+                let numGrandChildren = 0;
+                for (const child of node.children) {
+                    numGrandChildren += child.children.length ?? 0;
+                }
+
+                if (numGrandChildren === 0) {
+                    console.warn("PARENT took all data from ALL children", node.name)
+                    node.children = [];
+                }
             }
 
             node.data = {
