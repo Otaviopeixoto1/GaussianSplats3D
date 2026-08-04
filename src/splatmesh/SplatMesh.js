@@ -184,7 +184,6 @@ export class SplatMesh extends THREE.Mesh {
             const scale = new THREE.Vector3().fromArray(scaleArray);
             const scene = SplatMesh.createScene(splatBuffer, position, rotation, scale,
                                                 options.splatAlphaRemovalThreshold || 1, options.opacity, options.visible);
-            console.log("ADDING SCENE TO", options.parent);
             const parent = options.parent ?? parentObject;
             parent.add(scene);
             scenes[i] = scene;
@@ -230,8 +229,7 @@ export class SplatMesh extends THREE.Mesh {
      *                                           the format produced by the splat tree builder worker starts and ends.
      * @return {SplatTree}
      */
-     buildSplatTree = function(minAlphas = [], onSplatTreeIndexesUpload, onSplatTreeConstruction, formats = []) {
-         console.log(formats);
+     buildSplatTree = function(minAlphas = [], onSplatTreeIndexesUpload, onSplatTreeConstruction) {
         return new Promise((resolve) => {
             this.disposeSplatTree();
             // TODO: expose SplatTree constructor parameters (maximumDepth and maxCentersPerNode) so that they can
@@ -255,27 +253,30 @@ export class SplatMesh extends THREE.Mesh {
                     this.splatTree = this.baseSplatTree;
                     this.baseSplatTree = null;
 
-                    let leavesWithVertices = 0;
-                    let avgSplatCount = 0;
-                    let maxSplatCount = 0;
-                    let nodeCount = 0;
-
-                    this.splatTree.visitLeaves((node) => {
-                        const nodeSplatCount = node.data.indexes.length;
-                        if (nodeSplatCount > 0) {
-                            avgSplatCount += nodeSplatCount;
-                            maxSplatCount = Math.max(maxSplatCount, nodeSplatCount);
-                            nodeCount++;
-                            leavesWithVertices++;
-                        }
-                    });
-                    if (this.logLevel >= LogLevel.Info) {
-                        console.log(`SplatTree leaves: ${this.splatTree.countLeaves()}`);
-                        console.log(`SplatTree leaves with splats:${leavesWithVertices}`);
-                        avgSplatCount = avgSplatCount / nodeCount;
-                        console.log(`Avg splat count per node: ${avgSplatCount}`);
-                        console.log(`Total splat count: ${this.getSplatCount()}`);
-                    }
+                    // let leavesWithVertices = 0;
+                    // let avgSplatCount = 0;
+                    // let maxSplatCount = 0;
+                    // let nodeCount = 0;
+                    //
+                    // this.splatTree.visitLeaves((node) => {
+                    //     if (!node.data || !node.data.indexes) {
+                    //         return;
+                    //     }
+                    //     const nodeSplatCount = node.data.indexes.length;
+                    //     if (nodeSplatCount > 0) {
+                    //         avgSplatCount += nodeSplatCount;
+                    //         maxSplatCount = Math.max(maxSplatCount, nodeSplatCount);
+                    //         nodeCount++;
+                    //         leavesWithVertices++;
+                    //     }
+                    // });
+                    // if (this.logLevel >= LogLevel.Info) {
+                    //     console.log(`SplatTree leaves: ${this.splatTree.countLeaves()}`);
+                    //     console.log(`SplatTree leaves with splats:${leavesWithVertices}`);
+                    //     avgSplatCount = avgSplatCount / nodeCount;
+                    //     console.log(`Avg splat count per node: ${avgSplatCount}`);
+                    //     console.log(`Total splat count: ${this.getSplatCount()}`);
+                    // }
                     resolve();
                 }
             });
@@ -314,10 +315,6 @@ export class SplatMesh extends THREE.Mesh {
         this.finalBuild = finalBuild;
 
         const maxSplatCount = SplatMesh.getTotalMaxSplatCountForSplatBuffers(splatBuffers);
-
-        //
-        // TODO: add parent here !
-        //
         const newScenes = SplatMesh.buildScenes(this, splatBuffers, sceneOptions);
         if (keepSceneTransforms) {
             for (let i = 0; i < this.scenes.length && i < newScenes.length; i++) {
@@ -398,7 +395,7 @@ export class SplatMesh extends THREE.Mesh {
             "data-textures-upload-started",
             "data-textures-upload-ended",
         );
-        console.log(texUploadMesure.duration);
+        // console.log(texUploadMesure.duration);
 
         for (let i = 0; i < this.scenes.length; i++) {
             this.lastBuildScenes[i] = this.scenes[i];
@@ -412,7 +409,7 @@ export class SplatMesh extends THREE.Mesh {
             // TODO: IF format is .kstree, just load directly from the buffer
             //
             this.buildSplatTree(sceneOptions.map(options => options.splatAlphaRemovalThreshold || 1),
-                                onSplatTreeIndexesUpload, onSplatTreeConstruction, sceneOptions.map(options => options.format))
+                                onSplatTreeIndexesUpload, onSplatTreeConstruction)
             .then(() => {
                 if (this.onSplatTreeReadyCallback) this.onSplatTreeReadyCallback(this.splatTree);
                 this.onSplatTreeReadyCallback = null;
@@ -425,7 +422,7 @@ export class SplatMesh extends THREE.Mesh {
             "splat-mesh-build-started",
             "splat-mesh-build-ended",
         );
-        console.log(splatMeshBuildMeasure.duration);
+        // console.log(splatMeshBuildMeasure.duration);
 
         this.visible = (this.scenes.length > 0);
 

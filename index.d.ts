@@ -95,7 +95,8 @@ export enum SceneFormat {
     Splat = 0,
     KSplat = 1,
     Ply = 2,
-    Spz = 3
+    Spz = 3,
+    KSTree = 4
 }
 
 export enum LoaderStatus {
@@ -105,6 +106,7 @@ export enum LoaderStatus {
 }
 
 export interface SplatSceneOptions {
+    path: string;
     parent: Object3D;
     format: SceneFormat;
     splatAlphaRemovalThreshold: number;
@@ -152,6 +154,7 @@ export class Viewer {
 
     constructor(options: Partial<ViewerOptions>);
     public addSplatScene(path: string, options: Partial<SplatSceneOptions>): AbortablePromise;
+    public addSplatScenes(sceneOptions: Partial<SplatSceneOptions>[], showLoadingUI: boolean, onProgress: (progress: number, percentCompleteLabel: string, loaderStatus: LoaderStatus) => void): AbortablePromise;
     public getSplatScene(sceneIndex: number): SplatScene;
     public dispose(): Promise<void>;
 }
@@ -161,6 +164,7 @@ export class DropInViewer extends Group {
 
     constructor(options: Partial<ViewerOptions>);
     public addSplatScene(path: string, options: Partial<SplatSceneOptions>): AbortablePromise;
+    public addSplatScenes(sceneOptions: Partial<SplatSceneOptions>[], showLoadingUI: boolean): AbortablePromise;
     public getSplatScene(sceneIndex: number): SplatScene;
     public dispose(): Promise<void>;
 }

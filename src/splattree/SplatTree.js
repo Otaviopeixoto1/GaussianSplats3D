@@ -1,6 +1,9 @@
 /* eslint-disable */
 import * as THREE from 'three';
 import { delayedExecute } from '../Util.js';
+import {SceneFormat} from "../loaders/SceneFormat.js";
+import {KSplatTreeBuffer, KSplatTreeLoader} from "../loaders/ksplat/KSplatTreeLoader.js";
+import {SplatBuffer} from "../loaders/SplatBuffer.js";
 
 
 export class SplatTreeNode {
@@ -626,19 +629,46 @@ export class SplatTree {
 
                 if (checkForEarlyExit()) return;
 
-                const allCenters = [];
+                const centersForProcessing = [];
+                const workerSubtreeIdToConvSubtreeId = [];
+
                 if (splatMesh.dynamicMode) {
                     let splatOffset = 0;
                     for (let s = 0; s < splatMesh.scenes.length; s++) {
                         const scene = splatMesh.getScene(s);
+                        const sceneOptions = splatMesh.sceneOptions[s] || {};
                         const splatCount = scene.splatBuffer.getSplatCount();
-                        const sceneCenters = addCentersForScene(splatOffset, splatCount);
-                        allCenters.push(sceneCenters);
+
+                        if (sceneOptions.format === SceneFormat.KSTree) {
+                            const offset = SplatBuffer.calculateTotalSplatBufferSize(scene.splatBuffer);
+                            const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(scene.splatBuffer.bufferData, offset);
+                            const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
+                            subtree.sceneDimensions = new THREE.Vector3();
+                            subtree.sceneMin = subTreeRoot.min;
+                            subtree.sceneMax = subTreeRoot.max;
+                            subtree.rootNode = subTreeRoot;
+                            subtree.nodesWithIndexes = [subTreeRoot];
+                            subtree.splatMesh = splatMesh;
+                            this.subTrees.push(subtree);
+                        } else {
+                            const sceneCenters = addCentersForScene(splatOffset, splatCount);
+                            centersForProcessing.push(sceneCenters);
+                            workerSubtreeIdToConvSubtreeId.push(s)
+                            this.subTrees.push(null);
+                        }
+
                         splatOffset += splatCount;
                     }
                 } else {
+                    //
+                    // TODO: Fix .kstree files in non-dynamic mode !!
+                    //
+                    // This makes a single tree for the whole scene
                     const sceneCenters = addCentersForScene(0, splatMesh.getSplatCount());
-                    allCenters.push(sceneCenters);
+                    centersForProcessing.push(sceneCenters);
+
+                    workerSubtreeIdToConvSubtreeId.push(0);
+                    this.subTrees.push(null);
                 }
 
                 this.splatTreeWorker.onmessage = (e) => {
@@ -653,9 +683,12 @@ export class SplatTree {
 
                             if (checkForEarlyExit()) return;
 
-                            for (let workerSubTree of e.data.subTrees) {
+                            // for (let workerSubTree of e.data.subTrees) {
+                            for (let s = 0; s < e.data.subTrees.length; s++) {
+                                const workerSubTree = e.data.subTrees[s]
+                                const subtreeId = workerSubtreeIdToConvSubtreeId[s];
                                 const convertedSubTree = SplatSubTree.convertWorkerSubTree(workerSubTree, splatMesh);
-                                this.subTrees.push(convertedSubTree);
+                                this.subTrees[subtreeId] = convertedSubTree;
                             }
                             this.diposeSplatTreeWorker();
 
@@ -672,10 +705,22 @@ export class SplatTree {
                 delayedExecute(() => {
                     if (checkForEarlyExit()) return;
                     if (onIndexesUpload) onIndexesUpload(true);
-                    const transferBuffers = allCenters.map((array) => array.buffer);
-                    workerProcessCenters(this.splatTreeWorker, allCenters, transferBuffers, this.maxDepth, this.maxCentersPerNode);
+                    if (centersForProcessing.length > 0) {
+                        const transferBuffers = centersForProcessing.map((array) => array.buffer);
+                        workerProcessCenters(this.splatTreeWorker, centersForProcessing, transferBuffers, this.maxDepth, this.maxCentersPerNode);
+                    }
+                    else {
+                        if (onSplatTreeConstruction) onSplatTreeConstruction(false);
+                        delayedExecute(() => {
+                            this.diposeSplatTreeWorker();
+                            if (onSplatTreeConstruction) onSplatTreeConstruction(true);
+                            delayedExecute(() => {
+                                resolve();
+                            });
+                            return;
+                        });
+                    }
                 });
-
             });
 
         });

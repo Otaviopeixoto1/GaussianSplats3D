@@ -1082,10 +1082,8 @@ export class Viewer {
                                                this.inMemoryCompressionLevel, optimizeSplatData, headers);
             } else if (format === SceneFormat.KSplat || format === SceneFormat.KSTree) { //TODO: add ksplatTree
                 if (format === SceneFormat.KSTree) {
-                    console.log("Loading KSTREE !!!");
                     progressiveBuild = false;
                 } else {
-                    console.log("loading normal Ksplat")
                 }
 
                 //check if its a ksplatTree buffer and disable progressiveBuild on it !!
@@ -2231,7 +2229,7 @@ export class Viewer {
             let distanceToNode = Math.sqrt(dd);
 
 
-            if (node.data) {
+            if (node.data && node.data.indexes) {
                 splatRenderCount += numPointsOnNode;
                 nodeRenderList[nodeRenderCount] = node;
                 node.data.distanceToNode = distanceToNode;
