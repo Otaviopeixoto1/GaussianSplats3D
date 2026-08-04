@@ -57,7 +57,6 @@ export class KSplatTreeBuffer {
         }
         console.log("Tree buffer length:", totalDataElements);
         const totalByteLength = headerByteLength + (totalDataElements * bytesPerInt);
-        console.log("tree buffer byteLength:", totalByteLength);
 
         const fileBuffer = new ArrayBuffer(totalByteLength);
         const view = new DataView(fileBuffer);

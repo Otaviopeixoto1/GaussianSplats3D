@@ -105,6 +105,7 @@ export enum LoaderStatus {
 }
 
 export interface SplatSceneOptions {
+    parent: Object3D;
     format: SceneFormat;
     splatAlphaRemovalThreshold: number;
     showLoadingUI: boolean;

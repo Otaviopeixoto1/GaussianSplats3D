@@ -184,7 +184,9 @@ export class SplatMesh extends THREE.Mesh {
             const scale = new THREE.Vector3().fromArray(scaleArray);
             const scene = SplatMesh.createScene(splatBuffer, position, rotation, scale,
                                                 options.splatAlphaRemovalThreshold || 1, options.opacity, options.visible);
-            parentObject.add(scene);
+            console.log("ADDING SCENE TO", options.parent);
+            const parent = options.parent ?? parentObject;
+            parent.add(scene);
             scenes[i] = scene;
         }
         return scenes;
@@ -313,6 +315,9 @@ export class SplatMesh extends THREE.Mesh {
 
         const maxSplatCount = SplatMesh.getTotalMaxSplatCountForSplatBuffers(splatBuffers);
 
+        //
+        // TODO: add parent here !
+        //
         const newScenes = SplatMesh.buildScenes(this, splatBuffers, sceneOptions);
         if (keepSceneTransforms) {
             for (let i = 0; i < this.scenes.length && i < newScenes.length; i++) {

@@ -817,6 +817,7 @@ export class Viewer {
         const buildSection = (splatBuffer, firstBuild, finalBuild) => {
             if (!progressiveLoad && options.onProgress) options.onProgress(0, '0%', LoaderStatus.Processing);
             const addSplatBufferOptions = {
+                'parent': options.parent,
                 'rotation': options.rotation || options.orientation,
                 'position': options.position,
                 'scale': options.scale,
@@ -1083,7 +1084,10 @@ export class Viewer {
                 if (format === SceneFormat.KSTree) {
                     console.log("Loading KSTREE !!!");
                     progressiveBuild = false;
+                } else {
+                    console.log("loading normal Ksplat")
                 }
+
                 //check if its a ksplatTree buffer and disable progressiveBuild on it !!
                 return KSplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);
             } else if (format === SceneFormat.Ply) {
