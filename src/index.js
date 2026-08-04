@@ -19,6 +19,7 @@ import { RenderMode } from './RenderMode.js';
 import { LogLevel } from './LogLevel.js';
 import { SceneRevealMode } from './SceneRevealMode.js';
 import { SplatRenderMode } from './SplatRenderMode.js';
+import { KSplatTreeBuffer } from './loaders/ksplat/KSplatTreeLoader.js'
 
 export {
     PlyParser,
@@ -29,6 +30,7 @@ export {
     KSplatLoader,
     LoaderUtils,
     SplatBuffer,
+    KSplatTreeBuffer,
     SplatParser,
     SplatPartitioner,
     SplatBufferGenerator,

@@ -228,11 +228,12 @@ export class SplatMesh extends THREE.Mesh {
      *                                           the format produced by the splat tree builder worker starts and ends.
      * @return {SplatTree}
      */
-     buildSplatTree = function(minAlphas = [], onSplatTreeIndexesUpload, onSplatTreeConstruction) {
+     buildSplatTree = function(minAlphas = [], onSplatTreeIndexesUpload, onSplatTreeConstruction, formats = []) {
+         console.log(formats);
         return new Promise((resolve) => {
             this.disposeSplatTree();
             // TODO: expose SplatTree constructor parameters (maximumDepth and maxCentersPerNode) so that they can
-            // be configured on a per-scene basis
+            //  be configured on a per-scene basis
             this.baseSplatTree = new SplatTree(12, 1000);
             const buildStartTime = performance.now();
             const splatColor = new THREE.Vector4();
@@ -306,6 +307,7 @@ export class SplatMesh extends THREE.Mesh {
     build(splatBuffers, sceneOptions, keepSceneTransforms = true, finalBuild = false,
           onSplatTreeIndexesUpload, onSplatTreeConstruction, preserveVisibleRegion = true) {
 
+        performance.mark("splat-mesh-build-started");
         this.sceneOptions = sceneOptions;
         this.finalBuild = finalBuild;
 
@@ -381,7 +383,17 @@ export class SplatMesh extends THREE.Mesh {
 
         const splatBufferSplatCount = this.getSplatCount(true);
         if (this.enableDistancesComputationOnGPU) this.setupDistancesComputationTransformFeedback();
+        performance.mark("data-textures-upload-started");
+        //TODO: This seems like the major hickup
         const dataUpdateResults = this.refreshGPUDataFromSplatBuffers(isUpdateBuild);
+        performance.mark("data-textures-upload-ended");
+
+        const texUploadMesure = performance.measure(
+            "gpu texture upload duration",
+            "data-textures-upload-started",
+            "data-textures-upload-ended",
+        );
+        console.log(texUploadMesure.duration);
 
         for (let i = 0; i < this.scenes.length; i++) {
             this.lastBuildScenes[i] = this.scenes[i];
@@ -391,13 +403,24 @@ export class SplatMesh extends THREE.Mesh {
         this.lastBuildSceneCount = this.scenes.length;
 
         if (finalBuild && this.scenes.length > 0) {
+            //
+            // TODO: IF format is .kstree, just load directly from the buffer
+            //
             this.buildSplatTree(sceneOptions.map(options => options.splatAlphaRemovalThreshold || 1),
-                                onSplatTreeIndexesUpload, onSplatTreeConstruction)
+                                onSplatTreeIndexesUpload, onSplatTreeConstruction, sceneOptions.map(options => options.format))
             .then(() => {
                 if (this.onSplatTreeReadyCallback) this.onSplatTreeReadyCallback(this.splatTree);
                 this.onSplatTreeReadyCallback = null;
             });
         }
+
+        performance.mark("splat-mesh-build-ended");
+        const splatMeshBuildMeasure = performance.measure(
+            "splat mesh build duration",
+            "splat-mesh-build-started",
+            "splat-mesh-build-ended",
+        );
+        console.log(splatMeshBuildMeasure.duration);
 
         this.visible = (this.scenes.length > 0);
 

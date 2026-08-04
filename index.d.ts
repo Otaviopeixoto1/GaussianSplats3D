@@ -120,6 +120,26 @@ export class SplatBuffer {
     bufferData: ArrayBuffer | Uint8Array
 }
 
+export class SplatTreeNode {
+    depth: number;
+    children: SplatTreeNode[];
+}
+
+export class SplatSubTree {
+    rootNode: SplatTreeNode | null;
+}
+
+export class SplatTree {
+    public splatMesh: SplatMesh | null;
+    public subTrees: SplatSubTree[];
+}
+
+export class SplatMesh {
+    public splatTree: SplatTree | null;
+
+    public onSplatTreeReady(callback: (splatTree: SplatTree) => void): void;
+    public getScene(sceneIndex: number): SplatScene;
+}
 
 export class SplatScene extends Object3D {
     public splatBuffer: SplatBuffer;
@@ -127,6 +147,8 @@ export class SplatScene extends Object3D {
 
 
 export class Viewer {
+    public splatMesh: SplatMesh;
+
     constructor(options: Partial<ViewerOptions>);
     public addSplatScene(path: string, options: Partial<SplatSceneOptions>): AbortablePromise;
     public getSplatScene(sceneIndex: number): SplatScene;
@@ -134,6 +156,8 @@ export class Viewer {
 }
 
 export class DropInViewer extends Group {
+    public splatMesh: SplatMesh;
+
     constructor(options: Partial<ViewerOptions>);
     public addSplatScene(path: string, options: Partial<SplatSceneOptions>): AbortablePromise;
     public getSplatScene(sceneIndex: number): SplatScene;
@@ -143,4 +167,12 @@ export class DropInViewer extends Group {
 
 export class KSplatLoader {
     public static downloadFile(splatBuffer: SplatBuffer, fileName: string): void;
+}
+
+export class KSplatTreeBuffer {
+    public bufferData: ArrayBuffer;
+    constructor(splatBuffer: SplatBuffer, subTree: SplatSubTree);
+    public downloadToFile(fileName: string): void;
+    public static serializeOctreeToBuffer(subTree: SplatSubTree): ArrayBuffer;
+    public static deserializeOctreeBuffer(fileBuffer: ArrayBuffer, offset: number): SplatTreeNode;
 }

@@ -874,6 +874,32 @@ export class SplatBuffer {
         headerArrayFloat32[10] = header.maxSphericalHarmonicsCoeff || DefaultSphericalHarmonics8BitCompressionHalfRange;
     }
 
+    static calculateTotalSplatBufferSize(splatBuffer) {
+        const buffer = splatBuffer.bufferData;
+        const header = SplatBuffer.parseHeader(buffer);
+
+        const compressionLevel = header.compressionLevel;
+        const maxSectionCount = header.maxSectionCount;
+        const sectionHeaderArrayUint16 = new Uint16Array(buffer, 0, maxSectionCount * SplatBuffer.SectionHeaderSizeBytes / 2);
+        const sectionHeaderArrayUint32 = new Uint32Array(buffer, 0, maxSectionCount * SplatBuffer.SectionHeaderSizeBytes / 4);
+
+        let sectionHeaderBase = 0;
+        let sectionHeaderBaseUint16 = sectionHeaderBase / 2;
+        let sectionHeaderBaseUint32 = sectionHeaderBase / 4;
+        let sectionBase = SplatBuffer.HeaderSizeBytes + header.maxSectionCount * SplatBuffer.SectionHeaderSizeBytes;
+        for (let i = 0; i < maxSectionCount; i++) {
+            const sphericalHarmonicsDegree = sectionHeaderArrayUint16[sectionHeaderBaseUint16 + 20];
+            const { bytesPerSplat } = SplatBuffer.calculateComponentStorage(compressionLevel, sphericalHarmonicsDegree);
+
+            sectionBase += bytesPerSplat * header.splatCount;
+            sectionHeaderBase += SplatBuffer.SectionHeaderSizeBytes;
+            sectionHeaderBaseUint16 = sectionHeaderBase / 2;
+            sectionHeaderBaseUint32 = sectionHeaderBase / 4;
+        }
+
+        return sectionBase;
+    }
+
     static parseSectionHeaders(header, buffer, offset = 0, secLoadedCountsToMax) {
         const compressionLevel = header.compressionLevel;
 

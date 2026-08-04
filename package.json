@@ -4,7 +4,7 @@
         "type": "git",
         "url": "https://github.com/Otavio peixoto1/GaussianSplats3D"
     },
-    "version": "0.4.8-beta22",
+    "version": "0.4.8-beta44",
     "description": "A for of mkkellogg's Three.js-based 3D Gaussian splat viewer",
     "module": "build/gaussian-splats-3d.module.js",
     "main": "build/gaussian-splats-3d.umd.cjs",

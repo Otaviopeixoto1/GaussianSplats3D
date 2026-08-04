@@ -28,6 +28,7 @@ import { LogLevel } from './LogLevel.js';
 import { SceneRevealMode } from './SceneRevealMode.js';
 import { SplatRenderMode } from './SplatRenderMode.js';
 import {BinaryHeap} from "../util/binary-heap.js";
+import { SplatBuffer } from './loaders/SplatBuffer.js';
 
 const THREE_CAMERA_FOV = 50;
 const MINIMUM_DISTANCE_TO_NEW_FOCAL_POINT = .75;
@@ -820,7 +821,12 @@ export class Viewer {
                 'position': options.position,
                 'scale': options.scale,
                 'splatAlphaRemovalThreshold': options.splatAlphaRemovalThreshold,
+                'format': format
             };
+            //
+            // TODO: Use the "format" to check for kstree file and if so, load the tree from it as well...
+            //  Add a new param for the format ! Do it on AddScenes as well
+            //
             return this.addSplatBuffers([splatBuffer], [addSplatBufferOptions],
                                          finalBuild, firstBuild && showLoadingUI, showLoadingUI,
                                          progressiveLoad, progressiveLoad).then(() => {
@@ -1016,6 +1022,7 @@ export class Viewer {
         for (let i = 0; i < sceneOptions.length; i++) {
             const options = sceneOptions[i];
             const format = (options.format !== undefined && options.format !== null) ? options.format : sceneFormatFromPath(options.path);
+            options.format = format;
             const baseDownloadPromise = this.downloadSplatSceneToSplatBuffer(options.path, options.splatAlphaRemovalThreshold,
                                                                              onLoadProgress.bind(this, i), false, undefined,
                                                                              format, options.headers);
@@ -1072,7 +1079,12 @@ export class Viewer {
             if (format === SceneFormat.Splat) {
                 return SplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold,
                                                this.inMemoryCompressionLevel, optimizeSplatData, headers);
-            } else if (format === SceneFormat.KSplat) {
+            } else if (format === SceneFormat.KSplat || format === SceneFormat.KSTree) { //TODO: add ksplatTree
+                if (format === SceneFormat.KSTree) {
+                    console.log("Loading KSTREE !!!");
+                    progressiveBuild = false;
+                }
+                //check if its a ksplatTree buffer and disable progressiveBuild on it !!
                 return KSplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);
             } else if (format === SceneFormat.Ply) {
                 return PlyLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold,

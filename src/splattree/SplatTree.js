@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { delayedExecute } from '../Util.js';
 
 
-class SplatTreeNode {
+export class SplatTreeNode {
 
     static idGen = 0;
 
@@ -28,7 +28,7 @@ class SplatTreeNode {
     }
 }
 
-class SplatSubTree {
+export class SplatSubTree {
 
     constructor(maxDepth, maxCentersPerNode) {
         this.maxDepth = maxDepth;
