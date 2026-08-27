@@ -588,6 +588,7 @@ export class Viewer {
 
     }();
 
+    //TODO: Optimize this ? (update a variable using resize events)
     getRenderDimensions(outDimensions) {
         if (this.rootElement) {
             outDimensions.x = this.rootElement.offsetWidth;
@@ -2006,15 +2007,26 @@ export class Viewer {
                 //
                 // TODO: Move this cull logic function
                 //
+                performance.mark("gather-visible-started");
                 const res = this.gatherVisibleNodes(splatTree.subTrees, baseModelView, this.camera.projectionMatrix, gatherAllNodes, false);
                 const nodeRenderList = res.nodes;
                 const splatRenderCount = res.splatCount;
+                performance.mark("gather-visible-ended");
+                performance.measure("gather visible nodes", "gather-visible-started", "gather-visible-ended")
 
-                nodeRenderList.sort((a, b) => {
-                    if (a.data.distanceToNode < b.data.distanceToNode) return -1;
-                    else return 1;
-                });
 
+                //
+                // TODO: Test Removing this... we could also do some kind of hierarchycal sort
+                //
+                // performance.mark("sort-visible-nodes-started")
+                // nodeRenderList.sort((a, b) => {
+                //     if (a.data.distanceToNode < b.data.distanceToNode) return -1;
+                //     else return 1;
+                // });
+                // performance.mark("sort-visible-nodes-ended")
+                // performance.measure("sort visible nodes", "sort-visible-nodes-started", "sort-visible-nodes-ended")
+
+                performance.mark("copy-nodes-indexes-started")
                 let currentByteOffset = splatRenderCount * Constants.BytesPerInt;
                 for (let i = 0; i < nodeRenderList.length; i++) {
                     const node = nodeRenderList[i];
@@ -2025,6 +2037,8 @@ export class Viewer {
                     destView.set(node.data.indexes);
                     currentByteOffset -= windowSizeBytes;
                 }
+                performance.mark("copy-nodes-indexes-ended")
+                performance.measure("copy nodes indexes", "copy-nodes-indexes-started", "copy-nodes-indexes-ended")
 
                 return {
                     'splatRenderCount': splatRenderCount,
@@ -2049,12 +2063,12 @@ export class Viewer {
     }();
 
     gatherVisibleNodes(subTrees, baseModelViewMatrix, projMatrix, gatherAllNodes, isOrthographic) {
-        performance.mark("gather-visible-started");
         const nodeRenderList = [];
 
         let nodeRenderCount = 0;
         let splatRenderCount = 0;
 
+        //TODO: Store a permanent ref and update based o nevents. This can be costly too
         const renderDimensions = new THREE.Vector3();
         this.getRenderDimensions(renderDimensions);
 
@@ -2071,6 +2085,7 @@ export class Viewer {
         let camObjPositions = [];
         let priorityQueue = new BinaryHeap(function (x) { return 1 / x.weight; });
 
+        performance.mark("fill-p-queue-started");
         for (let s = 0; s < subTrees.length; s++) {
             const subTree = subTrees[s];
 
@@ -2079,16 +2094,6 @@ export class Viewer {
                 this.splatMesh.getSceneTransform(s, sceneTransform);
                 modelView.multiply(sceneTransform);
             }
-
-            // if (!pointcloud.initialized()) {
-            //     continue;
-            // }
-
-            // pointcloud.numVisibleNodes = 0;
-            // pointcloud.numVisiblePoints = 0;
-            // pointcloud.deepestVisibleLevel = 0;
-            // pointcloud.visibleNodes = [];
-            // pointcloud.visibleGeometry = [];
 
             // Frustum in object space
             let frustum = new THREE.Frustum();
@@ -2111,21 +2116,13 @@ export class Viewer {
                 };
                 priorityQueue.push(newElement);
             }
-
-            // if (!pointcloud.root) {
-            //     console.error("PotreeScene: PointCloud Root not found.");
-            // }
-            //
-            // if (pointcloud.root!.isTreeNode()) {
-            //     pointcloud.hideDescendants((pointcloud.root! as LoadedPointCloudNode));
-            // }
         }
+        performance.mark("fill-p-queue-ended");
+        performance.measure("fill p-queue", "fill-p-queue-started", "fill-p-queue-ended");
 
 
         let numVisiblePoints = 0;
-        //
-        // TODO: Traverse the tree using the binary heap
-        //
+        performance.mark("consume-p-queue-started")
         while (priorityQueue.size() > 0) {
             let element = priorityQueue.pop();
             let node = element.node;
@@ -2135,17 +2132,22 @@ export class Viewer {
             let frustum = frustums[element.subTreeId];
             let camObjPos = camObjPositions[element.subTreeId];
 
+            //TODO: if parent was fully in frustum, dont do the test again !!! (child is automatically in too)
+            // -> We must test for fully in frustum or just partially intersecting (do test but count nodes inside          )
             let insideFrustum = frustum.intersectsBox(box);
             let maxLevel = Infinity; //pointcloud.maxLevel || Infinity;
             let level = node.depth;
 
-            const numPointsOnNode = node.getNumPoints();
+            const numPointsOnNode = node.numSplats;
 
             if (numVisiblePoints + numPointsOnNode > this.pointBudget) {
                 break;
             }
+            
+            // Todo: Keep a density texture as well in order to scale opacity and size of splats in shader
 
-            let visible = level <= 2 || insideFrustum;
+            //use level <= 2 if things are too ugly
+            let visible = (level <= 1) || insideFrustum;
             visible = visible && !(numVisiblePoints + numPointsOnNode > this.pointBudget);
             // visible = visible && !(numVisiblePointsInPointClouds.get(pointcloud)! + node.getNumPoints() > pointcloud.pointBudget);
             visible = visible && level < maxLevel;
@@ -2218,9 +2220,6 @@ export class Viewer {
 
             numVisiblePoints += numPointsOnNode;
 
-            // tempVector.copy(node.center).applyMatrix4(MVMatrix);
-            // const distanceToNode = tempVector.length();
-
             let dx = camObjPos.x - node.center.x;
             let dy = camObjPos.y - node.center.y;
             let dz = camObjPos.z - node.center.z;
@@ -2288,9 +2287,10 @@ export class Viewer {
                 priorityQueue.push(newElement);
             }
         }
+        performance.mark("consume-p-queue-ended")
+        performance.measure("consume p-queue", "consume-p-queue-started", "consume-p-queue-ended")
 
-        performance.mark("gather-visible-ended");
-        nodeRenderList.length = nodeRenderCount;
+       nodeRenderList.length = nodeRenderCount;
         return {
             'nodes': nodeRenderList,
             'splatCount': splatRenderCount
