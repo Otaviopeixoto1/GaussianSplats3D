@@ -4,7 +4,7 @@ import { delayedExecute } from '../Util.js';
 import {SceneFormat} from "../loaders/SceneFormat.js";
 import {KSplatTreeBuffer, KSplatTreeLoader} from "../loaders/ksplat/KSplatTreeLoader.js";
 import {SplatBuffer} from "../loaders/SplatBuffer.js";
-
+import { StatsCollector } from '../../util/StatsCollector.js';
 
 export class SplatTreeNode {
 
@@ -18,16 +18,10 @@ export class SplatTreeNode {
         this.depth = depth;
         this.children = [];
         this.data = null;
+        //TODO: store the precalc num of splats
+        this.numSplats = 0;
         this.id = id || SplatTreeNode.idGen++;
         this.sampled = false;
-    }
-
-    getNumPoints() {
-        if (!this.data || !this.data.indexes) {
-            return 0;
-        }
-
-        return this.data.indexes.length;
     }
 }
 
@@ -55,6 +49,7 @@ export class SplatSubTree {
             for (let index of workerSubTreeNode.data.indexes) {
                 convertedNode.data.indexes.push(index);
             }
+            convertedNode.numSplats = workerSubTreeNode.numSplats
         }
         if (workerSubTreeNode.children) {
             for (let child of workerSubTreeNode.children) {
@@ -141,12 +136,13 @@ function createSplatTreeWorker(self) {
             this.depth = depth;
             this.children = [];
             this.data = null;
+            this.numSplats = 0;
             this.id = id || WorkerSplatTreeNodeIDGen++;
         }
 
     }
 
-    processSplatTreeNode = function(tree, node, indexToCenter, sceneCenters) {
+    processSplatTreeNode = function(tree, node, indexToCenter, sceneCenters, currentId) {
         const splatCount = node.data.indexes.length;
 
         if (splatCount < tree.maxCentersPerNode || node.depth > tree.maxDepth) {
@@ -163,7 +159,7 @@ function createSplatTreeWorker(self) {
                 else return -1;
             });
             tree.nodesWithIndexes.push(node);
-            return;
+            return currentId;
         }
 
         const nodeDimensions = [node.max[0] - node.min[0],
@@ -224,19 +220,23 @@ function createSplatTreeWorker(self) {
             }
         }
 
+        let id = currentId;
         for (let i = 0; i < childrenBounds.length; i++) {
-            const childNode = new WorkerSplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.depth + 1);
+            const childNode = new WorkerSplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.depth + 1, id + 1);
             childNode.data = {
                 'indexes': baseIndexes[i]
             };
             node.children.push(childNode);
+
+            id = processSplatTreeNode(tree, childNode, indexToCenter, sceneCenters, id + 1);
         }
 
         node.data = {};
-        for (let child of node.children) {
-            processSplatTreeNode(tree, child, indexToCenter, sceneCenters);
-        }
-        return;
+        // For BFS order indexing, run it after gathering all nodes
+        // for (let child of node.children) {
+        //     processSplatTreeNode(tree, child, indexToCenter, sceneCenters);
+        // }
+        return id;
     };
 
     class Point {
@@ -460,6 +460,7 @@ function createSplatTreeWorker(self) {
                 }
             }
 
+            node.numSplats = accepted.length;
             node.data = {
                 'indexes': accepted
             };
@@ -493,7 +494,7 @@ function createSplatTreeWorker(self) {
         const subTree = new WorkerSplatSubTree(maxDepth, maxCentersPerNode);
         subTree.sceneMin = sceneMin;
         subTree.sceneMax = sceneMax;
-        subTree.rootNode = new WorkerSplatTreeNode(subTree.sceneMin, subTree.sceneMax, 0);
+        subTree.rootNode = new WorkerSplatTreeNode(subTree.sceneMin, subTree.sceneMax, 0, 0);
         subTree.rootNode.data = {
             'indexes': indexes
         };
@@ -515,7 +516,7 @@ function createSplatTreeWorker(self) {
         for (let sceneCenters of allCenters) {
             const subTree = buildSubTree(sceneCenters, maxDepth, maxCentersPerNode);
             subTrees.push(subTree);
-            processSplatTreeNode(subTree, subTree.rootNode, indexToCenter, sceneCenters);
+            processSplatTreeNode(subTree, subTree.rootNode, indexToCenter, sceneCenters, 0);
 
             const baseSpacing = (subTree.rootNode.max[0] - subTree.rootNode.min[0]) / 128.0;
             poissonSample(subTree.rootNode, sceneCenters, indexToCenter, baseSpacing);
@@ -605,6 +606,10 @@ export class SplatTree {
                     sceneCenters[addBase] = center.x;
                     sceneCenters[addBase + 1] = center.y;
                     sceneCenters[addBase + 2] = center.z;
+                    //
+                    // TODO: Reindexing rework ? (splatOffset)
+                    //  -Since this is the first build maybe keep the same value
+                    //
                     sceneCenters[addBase + 3] = globalSplatIndex;
                     addedCount++;
                 }
@@ -651,6 +656,10 @@ export class SplatTree {
                             subtree.splatMesh = splatMesh;
                             this.subTrees.push(subtree);
                         } else {
+                            //
+                            // TODO: Reindexing rework ? (splatOffset)
+                            //  -Since this is the first build maybe keep the offset the same
+                            //
                             const sceneCenters = addCentersForScene(splatOffset, splatCount);
                             centersForProcessing.push(sceneCenters);
                             workerSubtreeIdToConvSubtreeId.push(s)
@@ -749,6 +758,52 @@ export class SplatTree {
         for (let subTree of this.subTrees) {
             visitLeavesFromNode(subTree.rootNode, visitFunc);
         }
+    }
+
+    /**
+     * Calculates the median and average splat counts of all SplatSubtrees
+     */
+    static CalculateTreeStats(tree) {
+        const stats = []
+
+        for (const subtree of tree.subTrees) {
+            const collector = new StatsCollector();
+            const root = subtree.rootNode;
+
+            const sampleNode = (node) => {
+                const numSplats = node.numSplats;
+                collector.pushValue(numSplats);
+            }
+
+            SplatTree.traversePost(root, sampleNode);
+
+            stats.push({
+                "average": collector.getAverage(),
+                "median": collector.getMedian(),
+                "nonEmptyCount": collector.getNonZeroCount(),
+                "count": collector.getCount(),
+                "max": collector.getMax(),
+                "min": collector.getMin(),
+                "minAboveZero": collector.getMinAboveZero()
+            });
+        }
+
+        return stats;
+    }
+
+    static traversePost(node, callback) {
+        const childCount = node.children.length ?? 0;
+        for (let i = 0; i < childCount; i++) {
+            const child = node.children[i];
+            if (child !== null && !child.sampled) {
+                SplatTree.traversePost(child, callback);
+            }
+        }
+        callback(node);
+    };
+
+    static rebuild() {
+
     }
 
 }
