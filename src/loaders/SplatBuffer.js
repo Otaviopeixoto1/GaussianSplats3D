@@ -185,6 +185,10 @@ export class SplatBuffer {
         return this.maxSplatCount;
     }
 
+    getSplatSection(globalSplatIndex) {
+        return this.globalSplatIndexToSectionMap[globalSplatIndex];
+    }
+
     getMinSphericalHarmonicsDegree() {
         let minSphericalHarmonicsDegree = 0;
         for (let i = 0; i < this.sections.length; i++) {
@@ -302,6 +306,33 @@ export class SplatBuffer {
 
         outColor.set(splatColorsArray[0], splatColorsArray[1],
                      splatColorsArray[2], splatColorsArray[3]);
+    }
+
+    getSplatRawData(globalSplatIndex) {
+        const sectionIndex = this.globalSplatIndexToSectionMap[globalSplatIndex];
+        const section = this.sections[sectionIndex];
+        const localSplatIndex = globalSplatIndex - section.splatCountOffset;
+
+        const bytesPerSplat = section.bytesPerSplat;
+        const splatBase = bytesPerSplat * localSplatIndex;
+        return new Uint8Array(this.bufferData, section.dataBase + splatBase, bytesPerSplat);
+    }
+
+    setSplatRawData(dstGlobalSplatIndex, rawDataArray) {
+        const sectionIndex = this.globalSplatIndexToSectionMap[dstGlobalSplatIndex];
+        const section = this.sections[sectionIndex];
+        const localSplatIndex = dstGlobalSplatIndex - section.splatCountOffset;
+
+        const bytesPerSplat = section.bytesPerSplat;
+        const splatBase = bytesPerSplat * localSplatIndex;
+
+        copyBetweenBuffers(rawDataArray.buffer, 0, this.bufferData, section.dataBase + splatBase, bytesPerSplat)
+    }
+
+    setSplatSectionRawData(dstSection, rawDataArray, numSplats) {
+        const section = this.sections[dstSection];
+        const bytesPerSplat = section.bytesPerSplat;
+        copyBetweenBuffers(rawDataArray.buffer, 0, this.bufferData, section.dataBase, bytesPerSplat * numSplats)
     }
 
     fillSplatCenterArray(outCenterArray, transform, srcFrom, srcTo, destFrom) {
@@ -994,7 +1025,6 @@ export class SplatBuffer {
     constructFromBuffer(bufferData, secLoadedCountsToMax) {
         this.bufferData = bufferData;
 
-        this.globalSplatIndexToLocalSplatIndexMap = [];
         this.globalSplatIndexToSectionMap = [];
 
         const header = SplatBuffer.parseHeader(this.bufferData);
@@ -1054,7 +1084,6 @@ export class SplatBuffer {
             const section = this.sections[i];
             for (let j = 0; j < section.maxSplatCount; j++) {
                 const globalSplatIndex = cumulativeSplatCount + j;
-                this.globalSplatIndexToLocalSplatIndexMap[globalSplatIndex] = j;
                 this.globalSplatIndexToSectionMap[globalSplatIndex] = i;
             }
             cumulativeSplatCount += section.maxSplatCount;
