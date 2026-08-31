@@ -199,8 +199,9 @@ function sortWorker(self) {
     };
 }
 
-export function createSortWorker(splatCount, useSharedMemory, enableSIMDInSort, integerBasedSort, dynamicMode,
-                                 splatSortDistanceMapPrecision = Constants.DefaultSplatSortDistanceMapPrecision) {
+//export function createSortWorker(splatCount, useSharedMemory, enableSIMDInSort, integerBasedSort, dynamicMode,
+//                                 splatSortDistanceMapPrecision = Constants.DefaultSplatSortDistanceMapPrecision) {
+export function createSortWorker() {
     const worker = new Worker(
         URL.createObjectURL(
             new Blob(['(', sortWorker.toString(), ')(self)'], {
@@ -208,7 +209,55 @@ export function createSortWorker(splatCount, useSharedMemory, enableSIMDInSort, 
             }),
         ),
     );
+    //
+    // let sourceWasm = SorterWasm;
+    //
+    // // iOS makes choosing the right WebAssembly configuration tricky :(
+    // const iOSSemVer = isIOS() ? getIOSSemever() : null;
+    // if (!enableSIMDInSort && !useSharedMemory) {
+    //     sourceWasm = SorterWasmNoSIMD;
+    //     // Testing on various devices has shown that even when shared memory is disabled, the WASM module with shared
+    //     // memory can still be used most of the time -- the exception seems to be iOS devices below 16.4
+    //     if (iOSSemVer && iOSSemVer.major <= 16 && iOSSemVer.minor < 4) {
+    //         sourceWasm = SorterWasmNoSIMDNonShared;
+    //     }
+    // } else if (!enableSIMDInSort) {
+    //     sourceWasm = SorterWasmNoSIMD;
+    // } else if (!useSharedMemory) {
+    //     // Same issue with shared memory as above on iOS devices
+    //     if (iOSSemVer && iOSSemVer.major <= 16 && iOSSemVer.minor < 4) {
+    //         sourceWasm = SorterWasmNonShared;
+    //     }
+    // }
+    //
+    // const sorterWasmBinaryString = atob(sourceWasm);
+    // const sorterWasmBytes = new Uint8Array(sorterWasmBinaryString.length);
+    // for (let i = 0; i < sorterWasmBinaryString.length; i++) {
+    //     sorterWasmBytes[i] = sorterWasmBinaryString.charCodeAt(i);
+    // }
+    //
+    // worker.postMessage({
+    //     'init': {
+    //         'sorterWasmBytes': sorterWasmBytes.buffer,
+    //         'splatCount': splatCount,
+    //         'useSharedMemory': useSharedMemory,
+    //         'integerBasedSort': integerBasedSort,
+    //         'dynamicMode': dynamicMode,
+    //         'distanceMapRange': 1 << splatSortDistanceMapPrecision,
+    //         // Super hacky
+    //         'Constants': {
+    //             'BytesPerFloat': Constants.BytesPerFloat,
+    //             'BytesPerInt': Constants.BytesPerInt,
+    //             'MemoryPageSize': Constants.MemoryPageSize,
+    //             'MaxScenes': Constants.MaxScenes
+    //         }
+    //     }
+    // });
+    return worker;
+}
 
+export function sortWorkerInitCommand(splatCount, useSharedMemory, enableSIMDInSort, integerBasedSort, dynamicMode,
+                                      splatSortDistanceMapPrecision = Constants.DefaultSplatSortDistanceMapPrecision) {
     let sourceWasm = SorterWasm;
 
     // iOS makes choosing the right WebAssembly configuration tricky :(
@@ -235,7 +284,7 @@ export function createSortWorker(splatCount, useSharedMemory, enableSIMDInSort, 
         sorterWasmBytes[i] = sorterWasmBinaryString.charCodeAt(i);
     }
 
-    worker.postMessage({
+    return {
         'init': {
             'sorterWasmBytes': sorterWasmBytes.buffer,
             'splatCount': splatCount,
@@ -251,6 +300,5 @@ export function createSortWorker(splatCount, useSharedMemory, enableSIMDInSort, 
                 'MaxScenes': Constants.MaxScenes
             }
         }
-    });
-    return worker;
+    };
 }

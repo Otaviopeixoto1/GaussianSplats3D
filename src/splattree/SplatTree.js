@@ -49,7 +49,7 @@ export class SplatSubTree {
             for (let index of workerSubTreeNode.data.indexes) {
                 convertedNode.data.indexes.push(index);
             }
-            convertedNode.numSplats = workerSubTreeNode.numSplats
+            convertedNode.numSplats = workerSubTreeNode.data.indexes.length
         }
         if (workerSubTreeNode.children) {
             for (let child of workerSubTreeNode.children) {
@@ -136,7 +136,6 @@ function createSplatTreeWorker(self) {
             this.depth = depth;
             this.children = [];
             this.data = null;
-            this.numSplats = 0;
             this.id = id || WorkerSplatTreeNodeIDGen++;
         }
 
@@ -460,7 +459,6 @@ function createSplatTreeWorker(self) {
                 }
             }
 
-            node.numSplats = accepted.length;
             node.data = {
                 'indexes': accepted
             };

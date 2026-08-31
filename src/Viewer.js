@@ -12,7 +12,8 @@ import { InfoPanel } from './ui/InfoPanel.js';
 import { SceneHelper } from './SceneHelper.js';
 import { Raycaster } from './raycaster/Raycaster.js';
 import { SplatMesh } from './splatmesh/SplatMesh.js';
-import { createSortWorker } from './worker/SortWorker.js';
+import {createSortWorker, sortWorkerInitCommand} from './worker/SortWorker.js';
+import { WorkerCommandQueue, WorkerCommandBuffer } from './worker/WorkerCommandQueue.js';
 import { Constants } from './Constants.js';
 import { getCurrentTime, isIOS, getIOSSemever, clamp } from './Util.js';
 import { AbortablePromise, AbortedPromiseError } from './AbortablePromise.js';
@@ -241,6 +242,13 @@ export class Viewer {
         this.sortWorkerTransforms = null;
         this.preSortMessages = [];
         this.runAfterNextSort = [];
+
+        // Sort queue will have 3 priorities (postsort(0), sort(1), presort(2))
+        this.sortCommandQueue = new WorkerCommandQueue(4);
+        this.initSorterCommandBuffer = this.sortCommandQueue.getCommandBuffer(3);
+        this.preSortCommandBuffer = this.sortCommandQueue.getCommandBuffer(2);
+        this.sortCommandBuffer = this.sortCommandQueue.getCommandBuffer(1);
+        this.postSortCommandBuffer = this.sortCommandQueue.getCommandBuffer(0);
 
         this.selfDrivenModeRunning = false;
         this.splatRenderReady = false;
@@ -1145,16 +1153,29 @@ export class Viewer {
                         // If we aren't calculating the splat distances from the center on the GPU, the sorting worker needs
                         // splat centers and transform indexes so that it can calculate those distance values.
                         if (!this.gpuAcceleratedSort) {
-                            this.preSortMessages.push({
-                                'centers': buildResults.centers.buffer,
-                                'sceneIndexes': buildResults.sceneIndexes.buffer,
-                                'range': {
-                                    'from': buildResults.from,
-                                    'to': buildResults.to,
-                                    'count': buildResults.count
-                                }
-                            });
+                            // console.log("PUSH PRESORT: UPLOAD")
+                            // console.log(buildResults)
+                            // this.preSortCommandBuffer.pushCommand({
+                            //     'centers': buildResults.centers.buffer,
+                            //     'sceneIndexes': buildResults.sceneIndexes.buffer,
+                            //     'range': {
+                            //         'from': buildResults.from,
+                            //         'to': buildResults.to,
+                            //         'count': buildResults.count
+                            //     }
+                            // });
+
+                            // this.preSortMessages.push({
+                            //     'centers': buildResults.centers.buffer,
+                            //     'sceneIndexes': buildResults.sceneIndexes.buffer,
+                            //     'range': {
+                            //         'from': buildResults.from,
+                            //         'to': buildResults.to,
+                            //         'count': buildResults.count
+                            //     }
+                            // });
                         }
+                        console.log("SETUP SORT WORKER")
                         const sortWorkerSetupPromise = (!this.sortWorker && maxSplatCount > 0) ?
                                                          this.setupSortWorker(this.splatMesh) : Promise.resolve();
                         sortWorkerSetupPromise.then(() => {
@@ -1240,7 +1261,7 @@ export class Viewer {
                 }
             };
             const buildResults = this.splatMesh.build(allSplatBuffers, allSplatBufferOptions, true, finalBuild, onSplatTreeIndexesUpload,
-                                                      onSplatTreeReady, preserveVisibleRegion);
+                                                      onSplatTreeReady, preserveVisibleRegion, this.preSortCommandBuffer);
             if (finalBuild && this.freeIntermediateSplatData) this.splatMesh.freeIntermediateSplatData();
             return buildResults;
         };
@@ -1258,44 +1279,29 @@ export class Viewer {
             const DistancesArrayType = this.integerBasedSort ? Int32Array : Float32Array;
             const splatCount = splatMesh.getSplatCount();
             const maxSplatCount = splatMesh.getMaxSplatCount();
-            this.sortWorker = createSortWorker(maxSplatCount, this.sharedMemoryForWorkers, this.enableSIMDInSort,
-                                               this.integerBasedSort, this.splatMesh.dynamicMode, this.splatSortDistanceMapPrecision);
-            this.sortWorker.onmessage = (e) => {
-                if (e.data.sortDone) {
-                    this.sortRunning = false;
-                    if (this.sharedMemoryForWorkers) {
-                        this.splatMesh.updateRenderIndexes(this.sortWorkerSortedIndexes, e.data.splatRenderCount);
-                    } else {
-                        const sortedIndexes = new Uint32Array(e.data.sortedIndexes.buffer, 0, e.data.splatRenderCount);
-                        this.splatMesh.updateRenderIndexes(sortedIndexes, e.data.splatRenderCount);
-                    }
+            this.sortWorker = createSortWorker();//maxSplatCount, this.sharedMemoryForWorkers, this.enableSIMDInSort,
+                                               //this.integerBasedSort, this.splatMesh.dynamicMode, this.splatSortDistanceMapPrecision);
 
-                    this.lastSplatSortCount = this.splatSortCount;
+            const initCommand = sortWorkerInitCommand(maxSplatCount, this.sharedMemoryForWorkers, this.enableSIMDInSort,
+                                                 this.integerBasedSort, this.splatMesh.dynamicMode, this.splatSortDistanceMapPrecision);
 
-                    this.lastSortTime = e.data.sortTime;
-                    this.sortPromiseResolver();
-                    this.sortPromiseResolver = null;
-                    this.forceRenderNextFrame();
-                    if (this.runAfterNextSort.length > 0) {
-                        this.runAfterNextSort.forEach((func) => {
-                            func();
-                        });
-                        this.runAfterNextSort.length = 0;
-                    }
-                } else if (e.data.sortCanceled) {
-                    this.sortRunning = false;
-                } else if (e.data.sortSetupPhase1Complete) {
+            console.log("INIT COMMAND", initCommand);
+            this.sortCommandQueue.setWorker(this.sortWorker);
+            console.log("PUSH PRESORT: INIT")
+            this.initSorterCommandBuffer.pushCommand(initCommand, (e) => {
+                console.log("WEBWORKER INIT RESPONSE", e);
+                if (e.sortSetupPhase1Complete) {
                     if (this.logLevel >= LogLevel.Info) console.log('Sorting web worker WASM setup complete.');
                     if (this.sharedMemoryForWorkers) {
-                        this.sortWorkerSortedIndexes = new Uint32Array(e.data.sortedIndexesBuffer,
-                                                                       e.data.sortedIndexesOffset, maxSplatCount);
-                        this.sortWorkerIndexesToSort = new Uint32Array(e.data.indexesToSortBuffer,
-                                                                       e.data.indexesToSortOffset, maxSplatCount);
-                        this.sortWorkerPrecomputedDistances = new DistancesArrayType(e.data.precomputedDistancesBuffer,
-                                                                                     e.data.precomputedDistancesOffset,
-                                                                                     maxSplatCount);
-                         this.sortWorkerTransforms = new Float32Array(e.data.transformsBuffer,
-                                                                      e.data.transformsOffset, Constants.MaxScenes * 16);
+                        this.sortWorkerSortedIndexes = new Uint32Array(e.sortedIndexesBuffer,
+                            e.sortedIndexesOffset, maxSplatCount);
+                        this.sortWorkerIndexesToSort = new Uint32Array(e.indexesToSortBuffer,
+                            e.indexesToSortOffset, maxSplatCount);
+                        this.sortWorkerPrecomputedDistances = new DistancesArrayType(e.precomputedDistancesBuffer,
+                            e.precomputedDistancesOffset,
+                            maxSplatCount);
+                        this.sortWorkerTransforms = new Float32Array(e.transformsBuffer,
+                            e.transformsOffset, Constants.MaxScenes * 16);
                     } else {
                         this.sortWorkerIndexesToSort = new Uint32Array(maxSplatCount);
                         this.sortWorkerPrecomputedDistances = new DistancesArrayType(maxSplatCount);
@@ -1314,8 +1320,71 @@ export class Viewer {
                     }
 
                     resolve();
+                    return true;
                 }
-            };
+                return false;
+            });
+
+            // ONLY INIT MUST RUN
+            this.sortCommandQueue.flushCommands(3);
+
+
+            // this.sortWorker.onmessage = (e) => {
+            //     if (e.data.sortDone) {
+            //         this.sortRunning = false;
+            //         if (this.sharedMemoryForWorkers) {
+            //             this.splatMesh.updateRenderIndexes(this.sortWorkerSortedIndexes, e.data.splatRenderCount);
+            //         } else {
+            //             const sortedIndexes = new Uint32Array(e.data.sortedIndexes.buffer, 0, e.data.splatRenderCount);
+            //             this.splatMesh.updateRenderIndexes(sortedIndexes, e.data.splatRenderCount);
+            //         }
+            //
+            //         this.lastSplatSortCount = this.splatSortCount;
+            //
+            //         this.lastSortTime = e.data.sortTime;
+            //         this.sortPromiseResolver();
+            //         this.sortPromiseResolver = null;
+            //         this.forceRenderNextFrame();
+            //         if (this.runAfterNextSort.length > 0) {
+            //             this.runAfterNextSort.forEach((func) => {
+            //                 func();
+            //             });
+            //             this.runAfterNextSort.length = 0;
+            //         }
+            //     } else if (e.data.sortCanceled) {
+            //         this.sortRunning = false;
+            //     } //else if (e.data.sortSetupPhase1Complete) {
+            //         // if (this.logLevel >= LogLevel.Info) console.log('Sorting web worker WASM setup complete.');
+            //         // if (this.sharedMemoryForWorkers) {
+            //         //     this.sortWorkerSortedIndexes = new Uint32Array(e.data.sortedIndexesBuffer,
+            //         //                                                    e.data.sortedIndexesOffset, maxSplatCount);
+            //         //     this.sortWorkerIndexesToSort = new Uint32Array(e.data.indexesToSortBuffer,
+            //         //                                                    e.data.indexesToSortOffset, maxSplatCount);
+            //         //     this.sortWorkerPrecomputedDistances = new DistancesArrayType(e.data.precomputedDistancesBuffer,
+            //         //                                                                  e.data.precomputedDistancesOffset,
+            //         //                                                                  maxSplatCount);
+            //         //      this.sortWorkerTransforms = new Float32Array(e.data.transformsBuffer,
+            //         //                                                   e.data.transformsOffset, Constants.MaxScenes * 16);
+            //         // } else {
+            //         //     this.sortWorkerIndexesToSort = new Uint32Array(maxSplatCount);
+            //         //     this.sortWorkerPrecomputedDistances = new DistancesArrayType(maxSplatCount);
+            //         //     this.sortWorkerTransforms = new Float32Array(Constants.MaxScenes * 16);
+            //         // }
+            //         // for (let i = 0; i < splatCount; i++) this.sortWorkerIndexesToSort[i] = i;
+            //         // this.sortWorker.maxSplatCount = maxSplatCount;
+            //         //
+            //         // if (this.logLevel >= LogLevel.Info) {
+            //         //     console.log('Sorting web worker ready.');
+            //         //     const splatDataTextures = this.splatMesh.getSplatDataTextures();
+            //         //     const covariancesTextureSize = splatDataTextures.covariances.size;
+            //         //     const centersColorsTextureSize = splatDataTextures.centerColors.size;
+            //         //     console.log('Covariances texture size: ' + covariancesTextureSize.x + ' x ' + covariancesTextureSize.y);
+            //         //     console.log('Centers/colors texture size: ' + centersColorsTextureSize.x + ' x ' + centersColorsTextureSize.y);
+            //         // }
+            //         //
+            //         // resolve();
+            //     //}
+            // };
         });
     }
 
@@ -1882,6 +1951,8 @@ export class Viewer {
         ];
 
         return function(force = false, forceSortAll = false) {
+            // console.log("sort running", this.sortRunning);
+            // console.log("queues", this.sortCommandQueue.subQueues)
             if (!this.initialized) return Promise.resolve(false);
             if (this.sortRunning) return Promise.resolve(true);
             if (this.splatMesh.getSplatCount() <= 0) {
@@ -1966,15 +2037,54 @@ export class Viewer {
                     this.sortPromiseResolver = resolve;
                 });
 
-                if (this.preSortMessages.length > 0) {
-                    this.preSortMessages.forEach((message) => {
-                        this.sortWorker.postMessage(message);
-                    });
-                    this.preSortMessages = [];
-                }
-                this.sortWorker.postMessage({
-                    'sort': sortMessage
-                });
+
+
+                // if (this.preSortMessages.length > 0) {
+                //     this.preSortMessages.forEach((message) => {
+                //         this.sortWorker.postMessage(message);
+                //     });
+                //     this.preSortMessages = [];
+                // }
+
+                // this.sortWorker.postMessage({
+                //     'sort': sortMessage
+                // });
+                
+                // TODO: FIX SORTS NOT HAPPENING !!!!! sortRunning must be true
+                // console.log(sortMessage)
+                this.sortCommandBuffer.pushCommand({'sort': sortMessage}, (e) => {
+                    // console.log("SORT RESPONSE", e)
+                    if (e.sortDone) {
+                        this.sortRunning = false;
+                        if (this.sharedMemoryForWorkers) {
+                            this.splatMesh.updateRenderIndexes(this.sortWorkerSortedIndexes, e.splatRenderCount);
+                        } else {
+                            const sortedIndexes = new Uint32Array(e.sortedIndexes.buffer, 0, e.splatRenderCount);
+                            this.splatMesh.updateRenderIndexes(sortedIndexes, e.splatRenderCount);
+                        }
+
+                        this.lastSplatSortCount = this.splatSortCount;
+
+                        this.lastSortTime = e.sortTime;
+                        this.sortPromiseResolver();
+                        this.sortPromiseResolver = null;
+                        this.forceRenderNextFrame();
+                        if (this.runAfterNextSort.length > 0) {
+                            this.runAfterNextSort.forEach((func) => {
+                                func();
+                            });
+                            this.runAfterNextSort.length = 0;
+                        }
+                        return true;
+                    } else if (e.sortCanceled) {
+                        this.sortRunning = false;
+                        return true;
+                    }
+                    return false;
+                })
+
+                // console.log("queues", this.sortCommandQueue.subQueues)
+                this.sortCommandQueue.flushCommands();
 
                 if (queuedSorts.length === 0) {
                     lastSortViewPos.copy(this.camera.position);

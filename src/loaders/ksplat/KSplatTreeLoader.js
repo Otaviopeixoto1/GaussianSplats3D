@@ -31,6 +31,9 @@ export class KSplatTreeBuffer {
         const nodes = [];
         const nodeToIdMap = new Map();
 
+        //
+        // TODO: Either convert the node ids here or use DFS order ids
+        //
         function traverse(node) {
             if (!node) return;
             nodeToIdMap.set(node, nodes.length);
@@ -188,6 +191,7 @@ export class KSplatTreeBuffer {
                 childNode.data = {
                     'indexes': nodeDataList[childId]
                 };
+                childNode.numSplats = nodeDataList[childId].length;
                 childNode.sampled = true;
                 node.children.push(childNode);
             }
@@ -198,6 +202,7 @@ export class KSplatTreeBuffer {
         treeRoot.data = {
             'indexes': treeRootData
         };
+        treeRoot.numSplats = treeRootData.length;
         treeRoot.sampled = true;
 
         const queue = [treeRoot];
