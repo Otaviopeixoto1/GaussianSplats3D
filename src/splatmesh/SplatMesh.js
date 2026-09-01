@@ -403,9 +403,6 @@ export class SplatMesh extends THREE.Mesh {
                                                       this.splatScale, this.pointCloudModeEnabled, this.minSphericalHarmonicsDegree);
             }
 
-            //
-            // TODO: Only build these index maps if we need to build the tree
-            //  If loading kstree, the splat indexes can be given after the build finished
             const indexMaps = SplatMesh.buildSplatIndexMaps(splatBuffers);
             this.globalSplatIndexToLocalSplatIndexMap = indexMaps.localSplatIndexMap;
             this.globalSplatIndexToSceneIndexMap = indexMaps.sceneIndexMap;
@@ -414,7 +411,6 @@ export class SplatMesh extends THREE.Mesh {
         const splatBufferSplatCount = this.getSplatCount(true);
         if (this.enableDistancesComputationOnGPU) this.setupDistancesComputationTransformFeedback();
         performance.mark("data-textures-upload-started");
-        //TODO: This seems like the major hickup
         const dataUpdateResults = this.refreshGPUDataFromSplatBuffers(isUpdateBuild);
         performance.mark("data-textures-upload-ended");
 
@@ -423,7 +419,8 @@ export class SplatMesh extends THREE.Mesh {
             "data-textures-upload-started",
             "data-textures-upload-ended",
         );
-        console.log("TEX UPLOAD DURATION: ", texUploadMesure.duration);
+        if (this.logLevel >= LogLevel.Info)
+            console.log("Texture Upload Duration: ", texUploadMesure.duration);
 
         for (let i = 0; i < this.scenes.length; i++) {
             this.lastBuildScenes[i] = this.scenes[i];
@@ -448,7 +445,6 @@ export class SplatMesh extends THREE.Mesh {
                     const subtree = this.splatTree.subTrees[sceneId];
                     const splatBuffer = splatBuffers[sceneId];
 
-                    console.log("Started buffer:", sceneId, "->", splatBuffer.sections, "splat count:",splatBuffer.getSplatCount(), splatBuffer.globalSplatIndexToSectionMap.length);
 
                     //TODO: Support multiple splat sections ?
                     // the case of sections with different compression levels has to be resolved
@@ -500,15 +496,10 @@ export class SplatMesh extends THREE.Mesh {
                         return localToSceneId;
                     }
 
-                    console.log("Finished buffer:", sceneId)
 
                     currentGlobalOffset += reindexSplatTree(subtree.rootNode, 0);
                     splatBuffer.globalSplatIndexToSectionMap = newSplatSectionMap;
                     splatBuffer.updateLoadedCounts(1, newSplatSectionMap.length)
-
-                    //TODO: ALSO RECALCULATE THE SPLATBUFFER COUNT: THERE IS A MISMATCH BETWEEN IT AND
-                    // THE ACTUAL TOTAL COUNT OF SPLATS INSIDE THE SUBTREE !!!!
-
                     splatBuffer.setSplatSectionRawData(splatSectionId, newSceneSplatData, splatCount)
                 }
                 this.globalSplatIndexToLocalSplatIndexMap = newLocalSplatIndexMap;
@@ -525,23 +516,6 @@ export class SplatMesh extends THREE.Mesh {
                 this.updateBaseDataFromSplatBuffers();
                 this.updateDataTexturesFromBaseData(0, currentGlobalOffset - 1);
 
-                //TODO: Update scene index texture too ! (SHOULD BE UPDATED FROM BEFORE)
-                // const sceneIndexesDescriptor = this.splatDataTextures['sceneIndexes'];
-                // const paddedTransformIndexes = sceneIndexesDescriptor.data;
-                // const sceneIndexesTexture = sceneIndexesDescriptor.texture;
-                // for (let c = 0; c < splatCount; c++) paddedTransformIndexes[c] = this.globalSplatIndexToSceneIndexMap[c];
-                // sceneIndexesTexture.internalFormat = 'R32UI';
-                // sceneIndexesTexture.needsUpdate = true;
-                // this.material.uniforms.sceneIndexesTexture.value = sceneIndexesTexture;
-                // this.material.uniforms.sceneIndexesTextureSize.value.copy(sceneIndexesTexSize);
-                // this.material.uniformsNeedUpdate = true;
-                // this.splatDataTextures['sceneIndexes'] = {
-                //     'data': paddedTransformIndexes,
-                //     'texture': sceneIndexesTexture,
-                //     'size': sceneIndexesTexSize
-                // };
-
-
                 performance.mark("data-textures-reindexing-upload-ended");
 
                 const texReuploadMesure = performance.measure(
@@ -552,24 +526,6 @@ export class SplatMesh extends THREE.Mesh {
                 if (this.logLevel >= LogLevel.Info)
                     console.log("Texture reindexing duration:", texReuploadMesure.duration);
 
-                //
-                // TODO: We must also update the splat sortWorker:
-                //  Make this function also async. We can await the buildSplatTree() and then return the results
-                //  (Remove the const { centers, sceneIndexes } = this.getDataForDistancesComputation(updateStart, splatCount - 1);
-                //
-                //
-                // this.preSortMessages.push({
-                //                                 'centers': buildResults.centers.buffer,
-                //                                 'sceneIndexes': buildResults.sceneIndexes.buffer,
-                //                                 'range': {
-                //                                     'from': buildResults.from,
-                //                                     'to': buildResults.to,
-                //                                     'count': buildResults.count
-                //                                 }
-                //                             });
-                //
-
-                //TODO: PUSH THESE TO THE SPLAT WORKER
                 const { centers, sceneIndexes } = this.getDataForDistancesComputation(0, currentGlobalOffset - 1);
                 const updateMessage = {
                     'centers': centers.buffer,
@@ -580,7 +536,6 @@ export class SplatMesh extends THREE.Mesh {
                         'count': currentGlobalOffset
                     }
                 }
-                console.log("PUSH PRESORT: UPLOAD")
                 presortCommandBuffer.pushCommand(updateMessage);
 
                 if (this.onSplatTreeReadyCallback) this.onSplatTreeReadyCallback(this.splatTree);
