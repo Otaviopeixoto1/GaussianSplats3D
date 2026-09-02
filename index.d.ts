@@ -1,4 +1,4 @@
-import { Group, Object3D, Camera, WebGLRenderer } from 'three';
+import { Group, Object3D, Camera, WebGLRenderer, Box3 } from 'three';
 
 
 export class AbortablePromise<T = any> {
@@ -126,6 +126,7 @@ export class SplatBuffer {
 export class SplatTreeNode {
     depth: number;
     children: SplatTreeNode[];
+    boundingBox: Box3;
 }
 
 export class SplatSubTree {

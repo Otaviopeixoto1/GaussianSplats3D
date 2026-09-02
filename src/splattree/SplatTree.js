@@ -11,6 +11,7 @@ export class SplatTreeNode {
     static idGen = 0;
 
     constructor(min, max, depth, id) {
+        //TODO: remove redundant min and max values
         this.min = new THREE.Vector3().copy(min);
         this.max = new THREE.Vector3().copy(max);
         this.boundingBox = new THREE.Box3(this.min, this.max);
