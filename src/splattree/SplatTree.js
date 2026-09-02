@@ -8,7 +8,6 @@ import { StatsCollector } from '../../util/StatsCollector.js';
 
 export class SplatTreeNode {
 
-    static idGen = 0;
 
     constructor(min, max, depth, id) {
         //TODO: remove redundant min and max values
@@ -19,9 +18,8 @@ export class SplatTreeNode {
         this.depth = depth;
         this.children = [];
         this.data = null;
-        //TODO: store the precalc num of splats
         this.numSplats = 0;
-        this.id = id || SplatTreeNode.idGen++;
+        this.id = id;
         this.sampled = false;
     }
 }
@@ -642,10 +640,13 @@ export class SplatTree {
                         const scene = splatMesh.getScene(s);
                         const sceneOptions = splatMesh.sceneOptions[s] || {};
                         const splatCount = scene.splatBuffer.getSplatCount();
+                        console.log("splat count for scene", splatCount)
 
                         if (sceneOptions.format === SceneFormat.KSTree) {
+                            // .kstree files already have the octree stored in them
                             const offset = SplatBuffer.calculateTotalSplatBufferSize(scene.splatBuffer);
                             const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(scene.splatBuffer.bufferData, offset);
+                            console.log(subTreeRoot)
                             const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
                             subtree.sceneDimensions = new THREE.Vector3();
                             subtree.sceneMin = subTreeRoot.min;
