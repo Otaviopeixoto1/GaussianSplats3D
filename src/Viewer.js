@@ -1027,6 +1027,10 @@ export class Viewer {
             if (onProgress) onProgress(totalPercent, percentLabel, loaderStatus);
         };
 
+        if (this.logLevel >= LogLevel.Info) {
+            console.log("Loading Splat Data ...")
+        }
+
         const baseDownloadPromises = [];
         const nativeDownloadPromises = [];
         for (let i = 0; i < sceneOptions.length; i++) {

@@ -336,6 +336,9 @@ export class SplatMesh extends THREE.Mesh {
     build(splatBuffers, sceneOptions, keepSceneTransforms = true, finalBuild = false,
           onSplatTreeIndexesUpload, onSplatTreeConstruction, preserveVisibleRegion = true, presortCommandBuffer) {
 
+        if (this.logLevel >= LogLevel.Info) {
+            console.log("Build Splat Mesh ...")
+        }
         performance.mark("splat-mesh-build-started");
         this.sceneOptions = sceneOptions;
         this.finalBuild = finalBuild;
@@ -431,6 +434,9 @@ export class SplatMesh extends THREE.Mesh {
         this.lastBuildSceneCount = this.scenes.length;
 
         if (finalBuild && this.scenes.length > 0) {
+            if (this.logLevel >= LogLevel.Info) {
+                console.log("Building Splat Octree ...")
+            }
             this.buildSplatTree(sceneOptions.map(options => options.splatAlphaRemovalThreshold || 1),
                                 onSplatTreeIndexesUpload, onSplatTreeConstruction)
             .then(() => {
