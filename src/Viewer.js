@@ -1175,7 +1175,6 @@ export class Viewer {
                             //     }
                             // });
                         }
-                        console.log("SETUP SORT WORKER")
                         const sortWorkerSetupPromise = (!this.sortWorker && maxSplatCount > 0) ?
                                                          this.setupSortWorker(this.splatMesh) : Promise.resolve();
                         sortWorkerSetupPromise.then(() => {
@@ -1285,11 +1284,8 @@ export class Viewer {
             const initCommand = sortWorkerInitCommand(maxSplatCount, this.sharedMemoryForWorkers, this.enableSIMDInSort,
                                                  this.integerBasedSort, this.splatMesh.dynamicMode, this.splatSortDistanceMapPrecision);
 
-            console.log("INIT COMMAND", initCommand);
             this.sortCommandQueue.setWorker(this.sortWorker);
-            console.log("PUSH PRESORT: INIT")
             this.initSorterCommandBuffer.pushCommand(initCommand, (e) => {
-                console.log("WEBWORKER INIT RESPONSE", e);
                 if (e.sortSetupPhase1Complete) {
                     if (this.logLevel >= LogLevel.Info) console.log('Sorting web worker WASM setup complete.');
                     if (this.sharedMemoryForWorkers) {

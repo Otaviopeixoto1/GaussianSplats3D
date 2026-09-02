@@ -17,6 +17,7 @@ import {SplatBuffer} from "../loaders/SplatBuffer.js";
 //TODO: temporary, either make a SplatMeshBuilder class to manage build or
 // Use this one but make it not know about the command buffers
 import {WorkerCommandBuffer} from "../worker/WorkerCommandQueue.js"
+import {SceneFormat} from "../loaders/SceneFormat.js";
 
 const dummyGeometry = new THREE.BufferGeometry();
 const dummyMaterial = new THREE.MeshBasicMaterial();
@@ -433,11 +434,6 @@ export class SplatMesh extends THREE.Mesh {
             this.buildSplatTree(sceneOptions.map(options => options.splatAlphaRemovalThreshold || 1),
                                 onSplatTreeIndexesUpload, onSplatTreeConstruction)
             .then(() => {
-                //
-                // TODO: Check if its a kstree file (kstree should already have a partitioned splat buffer)
-                //  OTHERWISE: Partition SplatBuffer and reindex them based on the tree...
-                //
-
                 const newLocalSplatIndexMap = [];
                 const newSceneIndexMap = [];
                 let currentGlobalOffset = 0;
@@ -445,6 +441,47 @@ export class SplatMesh extends THREE.Mesh {
                     const subtree = this.splatTree.subTrees[sceneId];
                     const splatBuffer = splatBuffers[sceneId];
 
+                    //
+                    // Parse .kstree files:
+                    //
+                    const sceneOptions = this.sceneOptions[sceneId] || {};
+                    if (sceneOptions.format === SceneFormat.KSTree) {
+                        //Traversal order doesnt really matter here
+                        const nodeStack = [subtree.rootNode];
+                        let totalSplatCount = 0;
+                        while (nodeStack.length > 0) {
+                            const node = nodeStack.pop();
+
+                            for (let localToNodeId = 0; localToNodeId < node.numSplats; localToNodeId++) {
+                                node.data.indexes[localToNodeId] += currentGlobalOffset;
+                            }
+
+                            totalSplatCount += node.numSplats;
+                            nodeStack.push(...node.children);
+                        }
+                        // console.log("TOTAL SPLAT COUNT FOR SCENE", totalSplatCount)
+
+                        const newSplatSectionMap = [];
+                        for (let localToSceneId = 0; localToSceneId < totalSplatCount; localToSceneId++) {
+                            // Rebuilding index maps:
+                            newLocalSplatIndexMap.push(localToSceneId);
+                            newSceneIndexMap.push(sceneId);
+                            newSplatSectionMap.push(0);
+                        }
+
+                        //TODO: THERE ARE LESS SPLATS THAN THERE SHOULD BE HERE !
+                        // something is wrong either in the conversion process or on the header parsing
+                        splatBuffer.globalSplatIndexToSectionMap = newSplatSectionMap;
+                        splatBuffer.updateLoadedCounts(1, newSplatSectionMap.length)
+
+                        currentGlobalOffset += totalSplatCount;
+                        continue;
+                    }
+
+
+                    //
+                    // Reorder SplatBuffers
+                    //
 
                     //TODO: Support multiple splat sections ?
                     // the case of sections with different compression levels has to be resolved
@@ -456,15 +493,16 @@ export class SplatMesh extends THREE.Mesh {
                     const splatSectionId = 0;
                     const splatSection = splatBuffer.sections[splatSectionId];
                     const bytesPerSplat = splatSection.bytesPerSplat;
-                    const splatCount = splatBuffer.getSplatCount()
+                    const splatCount = splatBuffer.getSplatCount();
 
-                    const newSceneSplatData = new Uint8Array(bytesPerSplat * splatCount);
+                    const newBufferSplatData = new Uint8Array(bytesPerSplat * splatCount);
                     const newSplatSectionMap = [];
 
                     const reindexSplatTree = (node, currentId) => {
                         let localToSceneId = currentId;
                         if (node.data && node.data.indexes) {
                             const numSplats = node.numSplats;
+                            node.startLocalId = localToSceneId;
                             for(let localToNodeId = 0; localToNodeId < numSplats; localToNodeId++) {
                                 const currentSplatId = node.data.indexes[localToNodeId];
                                 const newLocalId = localToNodeId + localToSceneId;
@@ -472,7 +510,7 @@ export class SplatMesh extends THREE.Mesh {
 
                                 // Reindexing:
                                 const rawData = splatBuffer.getSplatRawData(localSplatId);
-                                newSceneSplatData.set(rawData, newLocalId * bytesPerSplat);
+                                newBufferSplatData.set(rawData, newLocalId * bytesPerSplat);
                                 node.data.indexes[localToNodeId] = newLocalId + currentGlobalOffset;
 
                                 // Rebuilding index maps:
@@ -482,6 +520,7 @@ export class SplatMesh extends THREE.Mesh {
                             }
 
                             localToSceneId += numSplats;
+                            node.endLocalId = node.startLocalId + numSplats - 1;
                         }
 
                         for (let c = 0; c < node.children.length; c++) {
@@ -496,17 +535,15 @@ export class SplatMesh extends THREE.Mesh {
                         return localToSceneId;
                     }
 
-
                     currentGlobalOffset += reindexSplatTree(subtree.rootNode, 0);
                     splatBuffer.globalSplatIndexToSectionMap = newSplatSectionMap;
                     splatBuffer.updateLoadedCounts(1, newSplatSectionMap.length)
-                    splatBuffer.setSplatSectionRawData(splatSectionId, newSceneSplatData, splatCount)
+                    splatBuffer.setSplatSectionRawData(splatSectionId, newBufferSplatData, splatCount)
                 }
                 this.globalSplatIndexToLocalSplatIndexMap = newLocalSplatIndexMap;
                 this.globalSplatIndexToSceneIndexMap = newSceneIndexMap;
 
                 const splatCount = this.getSplatCount(true);
-                console.log("SPLAT COUNT (CHECK):", currentGlobalOffset, "Real Count:", splatCount)
 
                 performance.mark("data-textures-reindexing-upload-started");
                 //TODO:
@@ -523,8 +560,10 @@ export class SplatMesh extends THREE.Mesh {
                     "data-textures-reindexing-upload-started",
                     "data-textures-reindexing-upload-ended",
                 );
-                if (this.logLevel >= LogLevel.Info)
+                if (this.logLevel >= LogLevel.Info) {
+                    console.log("Splat Count after reindexing:", currentGlobalOffset, "before:", splatCount);
                     console.log("Texture reindexing duration:", texReuploadMesure.duration);
+                }
 
                 const { centers, sceneIndexes } = this.getDataForDistancesComputation(0, currentGlobalOffset - 1);
                 const updateMessage = {
@@ -777,8 +816,6 @@ export class SplatMesh extends THREE.Mesh {
         const splatCount = this.getSplatCount(true);
         const fromSplat = this.lastBuildSplatCount;
         const toSplat = splatCount - 1;
-
-        console.log("REFRESH TEXTURES !", fromSplat, toSplat);
 
         if (!sinceLastBuildOnly) {
             this.setupDataTextures();
@@ -1063,8 +1100,6 @@ export class SplatMesh extends THREE.Mesh {
         //  Try to allow for generic updates (specify scene index and the range of splats on given scene)
         //
         
-        console.log("UPDATE BASE TEXTURE DATA", fromSplat, toSplat)
-
         const covarancesTextureDesc = this.splatDataTextures['covariances'];
         const covarianceCompressionLevel = covarancesTextureDesc ? covarancesTextureDesc.compressionLevel : undefined;
         const scaleRotationsTextureDesc = this.splatDataTextures['scaleRotations'];
@@ -1088,8 +1123,6 @@ export class SplatMesh extends THREE.Mesh {
     }
 
     updateDataTexturesFromBaseData(fromSplat, toSplat) {
-        console.log("UPDATING GPU TEXTURES", fromSplat, toSplat)
-
         const covarancesTextureDesc = this.splatDataTextures['covariances'];
         const covarianceCompressionLevel = covarancesTextureDesc ? covarancesTextureDesc.compressionLevel : undefined;
         const scaleRotationsTextureDesc = this.splatDataTextures['scaleRotations'];
@@ -2068,7 +2101,6 @@ export class SplatMesh extends THREE.Mesh {
                 sceneTransform = tempTransform;
             }
             if (covariances) {
-                console.log("FILL COVARIANCES", i, srcStart, srcEnd, destStart);
                 splatBuffer.fillSplatCovarianceArray(covariances, sceneTransform, srcStart, srcEnd, destStart, covarianceCompressionLevel);
             }
             if (scales || rotations) {

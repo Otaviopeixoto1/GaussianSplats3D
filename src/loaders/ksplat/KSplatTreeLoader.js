@@ -5,15 +5,16 @@ import { Constants } from '../../Constants.js';
 import * as THREE from "three";
 import {SplatTreeNode} from "../../splattree/SplatTree.js";
 
-// TODO: add a potree-like tree build system that can also be loaded with this
-//
 
 export class KSplatTreeBuffer {
     constructor(splatBuffer, subTree) {
         const ksplatBuffer = splatBuffer.bufferData;
         const treeBuffer = KSplatTreeBuffer.serializeOctreeToBuffer(subTree);
 
-        const totalByteLength = ksplatBuffer.byteLength + treeBuffer.byteLength;
+        const splatBufferByteLength = SplatBuffer.calculateTotalSplatBufferSize(splatBuffer);
+        console.log("TREE STORE OFFSET", splatBufferByteLength)
+
+        const totalByteLength = splatBufferByteLength + treeBuffer.byteLength;
 
         this.bufferData = new ArrayBuffer(totalByteLength);
         const finalView = new Uint8Array(this.bufferData);
@@ -23,7 +24,7 @@ export class KSplatTreeBuffer {
 
         // Copy the splats to the start of the buffer and the tree to the end
         finalView.set(view1, 0);
-        finalView.set(view2, ksplatBuffer.byteLength);
+        finalView.set(view2, splatBufferByteLength);
     }
 
     static serializeOctreeToBuffer(subTree) {
@@ -31,9 +32,6 @@ export class KSplatTreeBuffer {
         const nodes = [];
         const nodeToIdMap = new Map();
 
-        //
-        // TODO: Either convert the node ids here or use DFS order ids
-        //
         function traverse(node) {
             if (!node) return;
             nodeToIdMap.set(node, nodes.length);
@@ -49,8 +47,11 @@ export class KSplatTreeBuffer {
         const nodeCount = nodes.length;
         const bytesPerInt = 4;
 
-        // 1 Int (total node count) + 6 Floats (BBox) + (10 Ints for each node)
-        const headerElementCount = 1 + 6 + (nodeCount * 10);
+        console.log("Serializing", nodeCount)
+
+
+        // 1 Int (total node count) + 6 Floats (BBox) + (12 Ints for each node: 4 for offsets, 8 for child ids)
+        const headerElementCount = 1 + 6 + (nodeCount * 12);
         const headerByteLength = headerElementCount * bytesPerInt;
 
         let totalDataElements = 0;
@@ -85,6 +86,8 @@ export class KSplatTreeBuffer {
 
             view.setInt32(byteOffset, currentDataByteOffset, true); byteOffset += 4;
             view.setInt32(byteOffset, jsArray.length, true); byteOffset += 4;
+            view.setInt32(byteOffset, node.startLocalId, true); byteOffset += 4;
+            view.setInt32(byteOffset, node.endLocalId, true); byteOffset += 4;
 
             for (let i = 0; i < 8; i++) {
                 const childNode = node.children[i];
@@ -92,6 +95,7 @@ export class KSplatTreeBuffer {
                 view.setInt32(byteOffset, childId, true); byteOffset += 4;
             }
 
+            //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
             if (jsArray.length > 0) {
                 const elementOffset = currentDataByteOffset / bytesPerInt;
                 rawDataView.set(new Int32Array(jsArray), elementOffset);
@@ -125,24 +129,28 @@ export class KSplatTreeBuffer {
         );
         byteOffset += 12;
 
+        const nodeDataOffsets = []
         const nodeDataList = [];
         const nodeIdToChildrenIds = [];
 
         for (let i = 0; i < nodeCount; i++) {
-            const dataByteOffset = offset + view.getInt32(byteOffset, true);
-            byteOffset += 4;
-            const elementLength = view.getInt32(byteOffset, true);
-            byteOffset += 4;
+            const dataByteOffset = offset + view.getInt32(byteOffset, true); byteOffset += 4;
+            const elementLength = view.getInt32(byteOffset, true); byteOffset += 4;
+            const startLocalId =  view.getInt32(byteOffset, true); byteOffset += 4;
+            const endLocalId = view.getInt32(byteOffset, true); byteOffset += 4;
 
             const childIds = [];
             for (let c = 0; c < 8; c++) {
-                childIds.push(view.getInt32(byteOffset, true));
-                byteOffset += 4;
+                childIds.push(view.getInt32(byteOffset, true)); byteOffset += 4;
             }
+
+            nodeDataOffsets.push({
+                start: startLocalId,
+                end: endLocalId
+            });
 
             const nodeData = Array.from(new Int32Array(fileBuffer, dataByteOffset, elementLength));
             nodeDataList.push(nodeData);
-
             nodeIdToChildrenIds.push(childIds);
         }
 
@@ -187,23 +195,35 @@ export class KSplatTreeBuffer {
 
             for (let i = 0; i < 8; i++) {
                 const childId = nodeChildren[i];
+                if (childId === -1) {
+                    continue;
+                }
+
                 const childNode = new SplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.depth + 1, childId);
+                const dataOffsets = nodeDataOffsets[0];
+                //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
                 childNode.data = {
                     'indexes': nodeDataList[childId]
                 };
                 childNode.numSplats = nodeDataList[childId].length;
                 childNode.sampled = true;
+                childNode.startLocalId = dataOffsets.start;
+                childNode.endLocalId = dataOffsets.end;
                 node.children.push(childNode);
             }
         };
 
+        const treeRootOffsets = nodeDataOffsets[0];
         const treeRootData = nodeDataList[0];
         const treeRoot = new SplatTreeNode(treeMin, treeMax, 0, 0);
+        //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
         treeRoot.data = {
             'indexes': treeRootData
         };
         treeRoot.numSplats = treeRootData.length;
         treeRoot.sampled = true;
+        treeRoot.startLocalId = treeRootOffsets.start;
+        treeRoot.endLocalId = treeRootOffsets.end;
 
         const queue = [treeRoot];
         while (queue.length > 0) {
