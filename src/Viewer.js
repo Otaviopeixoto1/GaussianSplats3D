@@ -276,6 +276,7 @@ export class Viewer {
         this.mouseUpListener = null;
         this.keyDownListener = null;
 
+        // Running promises
         this.sortPromise = null;
         this.sortPromiseResolver = null;
         this.splatSceneDownloadPromises = {};
@@ -327,6 +328,21 @@ export class Viewer {
             }
         }
 
+        // Setup Render Dimensions and Resizing:
+        this.renderDimensions = new THREE.Vector2();
+        this.getRenderDimensions(this.renderDimensions);
+
+        this.resizeObserver = new ResizeObserver(() => {
+            this.getRenderDimensions(this.renderDimensions);
+            if (!this.usingExternalRenderer) {
+                this.renderer.setSize(this.renderDimensions.x, this.renderDimensions.y);
+                this.forceRenderNextFrame();
+            }
+        });
+        this.resizeObserver.observe(this.rootElement);
+
+
+        // Setup Three.js and helper objects:
         this.setupCamera();
         this.setupRenderer();
         this.setupWebXR(this.webXRSessionInit);
@@ -348,8 +364,7 @@ export class Viewer {
 
     setupCamera() {
         if (!this.usingExternalCamera) {
-            const renderDimensions = new THREE.Vector2();
-            this.getRenderDimensions(renderDimensions);
+            const renderDimensions = this.renderDimensions;
 
             this.perspectiveCamera = new THREE.PerspectiveCamera(THREE_CAMERA_FOV, renderDimensions.x / renderDimensions.y, 0.1, 1000);
             this.orthographicCamera = new THREE.OrthographicCamera(renderDimensions.x / -2, renderDimensions.x / 2,
@@ -363,8 +378,7 @@ export class Viewer {
 
     setupRenderer() {
         if (!this.usingExternalRenderer) {
-            const renderDimensions = new THREE.Vector2();
-            this.getRenderDimensions(renderDimensions);
+            const renderDimensions = this.renderDimensions;
 
             this.renderer = new THREE.WebGLRenderer({
                 antialias: false,
@@ -375,15 +389,8 @@ export class Viewer {
             this.renderer.setClearColor(new THREE.Color( 0x000000 ), 0.0);
             this.renderer.setSize(renderDimensions.x, renderDimensions.y);
 
-            this.resizeObserver = new ResizeObserver(() => {
-                this.getRenderDimensions(renderDimensions);
-                this.renderer.setSize(renderDimensions.x, renderDimensions.y);
-                this.forceRenderNextFrame();
-            });
-            this.resizeObserver.observe(this.rootElement);
             this.rootElement.appendChild(this.renderer.domElement);
         }
-
     }
 
     setupWebXR(webXRSessionInit) {
@@ -570,13 +577,12 @@ export class Viewer {
 
     checkForFocalPointChange = function() {
 
-        const renderDimensions = new THREE.Vector2();
         const toNewFocalPoint = new THREE.Vector3();
         const outHits = [];
 
         return function() {
             if (!this.transitioningCameraTarget) {
-                this.getRenderDimensions(renderDimensions);
+                const renderDimensions = this.renderDimensions;
                 outHits.length = 0;
                 this.raycaster.setFromCameraAndScreenPosition(this.camera, this.mousePosition, renderDimensions);
                 this.raycaster.intersectSplatMesh(this.splatMesh, outHits);
@@ -667,15 +673,15 @@ export class Viewer {
 
     updateSplatMesh = function() {
 
-        const renderDimensions = new THREE.Vector2();
+        let webXRRenderDimensions = new THREE.Vector3();
 
         return function() {
             if (!this.splatMesh) return;
+            let renderDimensions = this.renderDimensions;
             const splatCount = this.splatMesh.getSplatCount();
             if (splatCount > 0) {
                 this.splatMesh.updateVisibleRegionFadeDistance(this.sceneRevealMode);
                 this.splatMesh.updateTransforms();
-                this.getRenderDimensions(renderDimensions);
                 const focalLengthX = this.camera.projectionMatrix.elements[0] * 0.5 *
                                      this.devicePixelRatio * renderDimensions.x;
                 const focalLengthY = this.camera.projectionMatrix.elements[5] * 0.5 *
@@ -685,7 +691,12 @@ export class Viewer {
                 const focalAdjustment = this.focalAdjustment * focalMultiplier;
                 const inverseFocalAdjustment = 1.0 / focalAdjustment;
 
-                this.adjustForWebXRStereo(renderDimensions);
+                if (this.webXRActive) {
+                    // TODO: Figure out a less hacky way to determine if stereo rendering is active
+                    webXRRenderDimensions.copy(this.renderDimensions);
+                    this.adjustForWebXRStereo(webXRRenderDimensions);
+                    renderDimensions = webXRRenderDimensions
+                }
                 this.splatMesh.updateUniforms(renderDimensions, focalLengthX * focalAdjustment, focalLengthY * focalAdjustment,
                                               this.camera.isOrthographicCamera, this.camera.zoom || 1.0, inverseFocalAdjustment);
             }
@@ -694,8 +705,7 @@ export class Viewer {
     }();
 
     adjustForWebXRStereo(renderDimensions) {
-        // TODO: Figure out a less hacky way to determine if stereo rendering is active
-        if (this.camera && this.webXRActive) {
+        if (this.camera) {
             const xrCamera = this.renderer.xr.getCamera();
             const xrCameraProj00 = xrCamera.projectionMatrix.elements[0];
             const cameraProj00 = this.camera.projectionMatrix.elements[0];
@@ -1031,6 +1041,7 @@ export class Viewer {
             console.log("Loading Splat Data ...")
         }
 
+        // Enqueue all download promises and wait for all to finish
         const baseDownloadPromises = [];
         const nativeDownloadPromises = [];
         for (let i = 0; i < sceneOptions.length; i++) {
@@ -1098,8 +1109,6 @@ export class Viewer {
                     progressiveBuild = false;
                 } else {
                 }
-
-                //check if its a ksplatTree buffer and disable progressiveBuild on it !!
                 return KSplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);
             } else if (format === SceneFormat.Ply) {
                 return PlyLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold,
@@ -1840,11 +1849,11 @@ export class Viewer {
 
     updateFocusMarker = function() {
 
-        const renderDimensions = new THREE.Vector2();
         let wasTransitioning = false;
 
         return function(timeDelta) {
-            this.getRenderDimensions(renderDimensions);
+            const renderDimensions = this.renderDimensions;
+
             if (this.transitioningCameraTarget) {
                 this.sceneHelper.setFocusMarkerVisibility(true);
                 const currentFocusMarkerOpacity = Math.max(this.sceneHelper.getFocusMarkerOpacity(), 0.0);
@@ -1873,12 +1882,12 @@ export class Viewer {
     updateMeshCursor = function() {
 
         const outHits = [];
-        const renderDimensions = new THREE.Vector2();
 
         return function() {
+            const renderDimensions = this.renderDimensions;
+
             if (this.showMeshCursor) {
                 this.forceRenderNextFrame();
-                this.getRenderDimensions(renderDimensions);
                 outHits.length = 0;
                 this.raycaster.setFromCameraAndScreenPosition(this.camera, this.mousePosition, renderDimensions);
                 this.raycaster.intersectSplatMesh(this.splatMesh, outHits);
@@ -1898,12 +1907,10 @@ export class Viewer {
 
     updateInfoPanel = function() {
 
-        const renderDimensions = new THREE.Vector2();
-
         return function() {
             if (!this.showInfo) return;
+            const renderDimensions = this.renderDimensions;
             const splatCount = this.splatMesh.getSplatCount();
-            this.getRenderDimensions(renderDimensions);
             const cameraLookAtPosition = this.controls ? this.controls.target : null;
             const meshCursorPosition = this.showMeshCursor ? this.sceneHelper.meshCursor.position : null;
             const splatRenderCountPct = splatCount > 0 ? this.splatRenderCount / splatCount * 100 : 0;
@@ -2179,8 +2186,7 @@ export class Viewer {
         let splatRenderCount = 0;
 
         //TODO: Store a permanent ref and update based o nevents. This can be costly too
-        const renderDimensions = new THREE.Vector3();
-        this.getRenderDimensions(renderDimensions);
+        const renderDimensions = this.renderDimensions;
 
         const sceneTransform = new THREE.Matrix4();
         const modelView = new THREE.Matrix4();
