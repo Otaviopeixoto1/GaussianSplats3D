@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 
+//
+// TODO: Implement DynamicSplatScene, a scene that can be continuously used for loading splats directly
+//
+
 /**
  * SplatScene: Descriptor for a single splat scene managed by an instance of SplatMesh.
  */

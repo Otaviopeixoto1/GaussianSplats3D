@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SplatBuffer } from '../SplatBuffer.js';
+import {KSplatHeader, SplatBuffer} from '../SplatBuffer.js';
 import { SplatBufferGenerator } from '../SplatBufferGenerator.js';
 import { SplatParser } from './SplatParser.js';
 import { fetchWithProgress, delayedExecute, nativePromiseWithExtractedComponents } from '../../Util.js';
@@ -30,7 +30,7 @@ export class SplatLoader {
                                                           InternalLoadType.ProgressiveToSplatArray;
         if (optimizeSplatData) internalLoadType = InternalLoadType.ProgressiveToSplatArray;
 
-        const splatDataOffsetBytes = SplatBuffer.HeaderSizeBytes + SplatBuffer.SectionHeaderSizeBytes;
+        const splatDataOffsetBytes = KSplatHeader.HeaderSizeBytes + KSplatHeader.SectionHeaderSizeBytes;
         const directLoadSectionSizeBytes = Constants.ProgressiveLoadSectionSize;
         const sectionCount = 1;
 
@@ -74,14 +74,14 @@ export class SplatLoader {
             if (!directLoadBufferIn) {
                 maxSplatCount = fileSize / SplatParser.RowSizeBytes;
                 directLoadBufferIn = new ArrayBuffer(fileSize);
-                const bytesPerSplat = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[0].BytesPerSplat;
+                const bytesPerSplat = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[0].BytesPerSplat;
                 const splatBufferSizeBytes = splatDataOffsetBytes + bytesPerSplat * maxSplatCount;
 
                 if (internalLoadType === InternalLoadType.ProgressiveToSplatBuffer) {
                     directLoadBufferOut = new ArrayBuffer(splatBufferSizeBytes);
-                    SplatBuffer.writeHeaderToBuffer({
-                        versionMajor: SplatBuffer.CurrentMajorVersion,
-                        versionMinor: SplatBuffer.CurrentMinorVersion,
+                    KSplatHeader.writeHeaderToBuffer({
+                        versionMajor: KSplatHeader.CurrentMajorVersion,
+                        versionMinor: KSplatHeader.CurrentMinorVersion,
                         maxSectionCount: sectionCount,
                         sectionCount: sectionCount,
                         maxSplatCount: maxSplatCount,
@@ -116,7 +116,7 @@ export class SplatLoader {
 
                     if (internalLoadType === InternalLoadType.ProgressiveToSplatBuffer) {
                         if (!directLoadSplatBuffer) {
-                            SplatBuffer.writeSectionHeaderToBuffer({
+                            KSplatHeader.writeSectionHeaderToBuffer({
                                 maxSplatCount: maxSplatCount,
                                 splatCount: splatCount,
                                 bucketSize: 0,
@@ -126,7 +126,7 @@ export class SplatLoader {
                                 storageSizeBytes: 0,
                                 fullBucketCount: 0,
                                 partiallyFilledBucketCount: 0
-                            }, 0, directLoadBufferOut, SplatBuffer.HeaderSizeBytes);
+                            }, 0, directLoadBufferOut, KSplatHeader.HeaderSizeBytes);
                             directLoadSplatBuffer = new SplatBuffer(directLoadBufferOut, false);
                         }
                         directLoadSplatBuffer.updateLoadedCounts(1, splatCount);

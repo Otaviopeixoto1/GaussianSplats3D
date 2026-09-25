@@ -5,7 +5,7 @@ import { INRIAV1PlyParser } from './INRIAV1PlyParser.js';
 import { PlayCanvasCompressedPlyParser } from './PlayCanvasCompressedPlyParser.js';
 import { PlyFormat } from './PlyFormat.js';
 import { fetchWithProgress, delayedExecute, nativePromiseWithExtractedComponents } from '../../Util.js';
-import { SplatBuffer } from '../SplatBuffer.js';
+import {KSplatHeader, SplatBuffer} from '../SplatBuffer.js';
 import { SplatBufferGenerator } from '../SplatBufferGenerator.js';
 import { LoaderStatus } from '../LoaderStatus.js';
 import { DirectLoadError } from '../DirectLoadError.js';
@@ -56,7 +56,7 @@ export class PlyLoader {
         }
 
         const directLoadSectionSizeBytes = Constants.ProgressiveLoadSectionSize;
-        const splatBufferDataOffsetBytes = SplatBuffer.HeaderSizeBytes + SplatBuffer.SectionHeaderSizeBytes;
+        const splatBufferDataOffsetBytes = KSplatHeader.HeaderSizeBytes + KSplatHeader.SectionHeaderSizeBytes;
         const sectionCount = 1;
 
         let plyFormat;
@@ -138,12 +138,12 @@ export class PlyLoader {
                         }
 
                         if (internalLoadType === InternalLoadType.ProgressiveToSplatBuffer) {
-                            const shDescriptor = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree];
+                            const shDescriptor = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree];
                             const splatBufferSizeBytes = splatBufferDataOffsetBytes + shDescriptor.BytesPerSplat * maxSplatCount;
                             directLoadBufferOut = new ArrayBuffer(splatBufferSizeBytes);
-                            SplatBuffer.writeHeaderToBuffer({
-                                versionMajor: SplatBuffer.CurrentMajorVersion,
-                                versionMinor: SplatBuffer.CurrentMinorVersion,
+                            KSplatHeader.writeHeaderToBuffer({
+                                versionMajor: KSplatHeader.CurrentMajorVersion,
+                                versionMinor: KSplatHeader.CurrentMinorVersion,
                                 maxSectionCount: sectionCount,
                                 sectionCount: sectionCount,
                                 maxSplatCount: maxSplatCount,
@@ -191,7 +191,7 @@ export class PlyLoader {
 
                         if (!baseSplatDataLoaded) {
                             if (internalLoadType === InternalLoadType.ProgressiveToSplatBuffer) {
-                                const shDesc = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree];
+                                const shDesc = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree];
                                 const outOffset = processedBaseSplatCount * shDesc.BytesPerSplat + splatBufferDataOffsetBytes;
                                 if (plyFormat === PlyFormat.PlayCanvasCompressed) {
                                     PlayCanvasCompressedPlyParser.parseToUncompressedSplatBufferSection(
@@ -222,7 +222,7 @@ export class PlyLoader {
 
                             if (internalLoadType === InternalLoadType.ProgressiveToSplatBuffer) {
                                 if (!directLoadSplatBuffer) {
-                                    SplatBuffer.writeSectionHeaderToBuffer({
+                                    KSplatHeader.writeSectionHeaderToBuffer({
                                         maxSplatCount: maxSplatCount,
                                         splatCount: processedBaseSplatCount,
                                         bucketSize: 0,
@@ -233,7 +233,7 @@ export class PlyLoader {
                                         fullBucketCount: 0,
                                         partiallyFilledBucketCount: 0,
                                         sphericalHarmonicsDegree: outSphericalHarmonicsDegree
-                                    }, 0, directLoadBufferOut, SplatBuffer.HeaderSizeBytes);
+                                    }, 0, directLoadBufferOut, KSplatHeader.HeaderSizeBytes);
                                     directLoadSplatBuffer = new SplatBuffer(directLoadBufferOut, false);
                                 }
                                 directLoadSplatBuffer.updateLoadedCounts(1, processedBaseSplatCount);

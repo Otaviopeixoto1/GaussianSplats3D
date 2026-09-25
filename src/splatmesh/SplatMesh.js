@@ -19,33 +19,6 @@ import {SplatBuffer} from "../loaders/SplatBuffer.js";
 import {WorkerCommandBuffer} from "../worker/WorkerCommandQueue.js"
 import {SceneFormat} from "../loaders/SceneFormat.js";
 
-const dummyGeometry = new THREE.BufferGeometry();
-const dummyMaterial = new THREE.MeshBasicMaterial();
-
-const COVARIANCES_ELEMENTS_PER_SPLAT = 6;
-const CENTER_COLORS_ELEMENTS_PER_SPLAT = 4;
-
-const COVARIANCES_ELEMENTS_PER_TEXEL_STORED = 4;
-const COVARIANCES_ELEMENTS_PER_TEXEL_ALLOCATED = 4;
-const COVARIANCES_ELEMENTS_PER_TEXEL_COMPRESSED_STORED = 6;
-const COVARIANCES_ELEMENTS_PER_TEXEL_COMPRESSED_ALLOCATED = 8;
-const SCALES_ROTATIONS_ELEMENTS_PER_TEXEL = 4;
-const CENTER_COLORS_ELEMENTS_PER_TEXEL = 4;
-const SCENE_INDEXES_ELEMENTS_PER_TEXEL = 1;
-
-const SCENE_FADEIN_RATE_FAST = 0.012;
-const SCENE_FADEIN_RATE_GRADUAL = 0.003;
-
-const VISIBLE_REGION_EXPANSION_DELTA = 1;
-
-// Based on my own observations across multiple devices, OSes and browsers, using textures that have one dimension
-// greater than 4096 while the other is greater than or equal to 4096 causes issues (Essentially any texture larger
-// than 4096 x 4096 (16777216) texels). Specifically it seems all texture data beyond the 4096 x 4096 texel boundary
-// is corrupted, while data below that boundary is usable. In these cases the texture has been valid in the eyes of
-// both Three.js and WebGL, and the texel format (RG, RGBA, etc.) has not mattered. More investigation will be needed,
-// but for now the work-around is to split the spherical harmonics into three textures (one for each color channel).
-const MAX_TEXTURE_TEXELS = 16777216;
-
 /**
  * SplatMesh: Container for one or more splat scenes, abstracting them into a single unified container for
  * splat data. Additionally contains data structures and code to make the splat data renderable as a Three.js mesh.
@@ -56,7 +29,7 @@ export class SplatMesh extends THREE.Mesh {
                 halfPrecisionCovariancesOnGPU = false, devicePixelRatio = 1, enableDistancesComputationOnGPU = true,
                 integerBasedDistancesComputation = false, antialiased = false, maxScreenSpaceSplatSize = 1024, logLevel = LogLevel.None,
                 sphericalHarmonicsDegree = 0, sceneFadeInRateMultiplier = 1.0, kernel2DSize = 0.3) {
-        super(dummyGeometry, dummyMaterial);
+        super(Constants.dummyGeometry, Constants.dummyMaterial);
 
         // Reference to a Three.js renderer
         this.renderer = undefined;
@@ -165,7 +138,8 @@ export class SplatMesh extends THREE.Mesh {
     /**
      * Build a container for each scene managed by this splat mesh based on an instance of SplatBuffer, along with optional
      * transform data (position, scale, rotation) passed to the splat mesh during the build process.
-     * @param {Array<THREE.Matrix4>} splatBuffers SplatBuffer instances containing splats for each scene
+     * @param {THREE.Object3D} parentObject object used as the scene parent
+     * @param {Array<SplatBuffer>} splatBuffers SplatBuffer instances containing splats for each scene
      * @param {Array<object>} sceneOptions Array of options objects: {
      *
      *         position (Array<number>):   Position of the scene, acts as an offset from its default position, defaults to [0, 0, 0]
@@ -174,7 +148,7 @@ export class SplatMesh extends THREE.Mesh {
      *
      *         scale (Array<number>):      Scene's scale, defaults to [1, 1, 1]
      * }
-     * @return {Array<THREE.Matrix4>}
+     * @return {Array<SplatScene>}
      */
     static buildScenes(parentObject, splatBuffers, sceneOptions) {
         const scenes = [];
@@ -414,6 +388,7 @@ export class SplatMesh extends THREE.Mesh {
 
         const splatBufferSplatCount = this.getSplatCount(true);
         if (this.enableDistancesComputationOnGPU) this.setupDistancesComputationTransformFeedback();
+
         performance.mark("data-textures-upload-started");
         const dataUpdateResults = this.refreshGPUDataFromSplatBuffers(isUpdateBuild);
         performance.mark("data-textures-upload-ended");
@@ -718,7 +693,7 @@ export class SplatMesh extends THREE.Mesh {
      * Dispose of only the Three.js mesh resources (geometry, material, and texture)
      */
     disposeMeshData() {
-        if (this.geometry && this.geometry !== dummyGeometry) {
+        if (this.geometry && this.geometry !== Constants.dummyGeometry) {
             this.geometry.dispose();
             this.geometry = null;
         }
@@ -847,7 +822,7 @@ export class SplatMesh extends THREE.Mesh {
         };
 
         const getCovariancesElementsPertexelStored = (compressionLevel) => {
-            return compressionLevel >= 1 ? COVARIANCES_ELEMENTS_PER_TEXEL_COMPRESSED_STORED : COVARIANCES_ELEMENTS_PER_TEXEL_STORED;
+            return compressionLevel >= 1 ? Constants.COVARIANCES_ELEMENTS_PER_TEXEL_COMPRESSED_STORED : Constants.COVARIANCES_ELEMENTS_PER_TEXEL_STORED;
         };
 
         const getCovariancesInitialTextureSpecs = (compressionLevel) => {
@@ -866,10 +841,10 @@ export class SplatMesh extends THREE.Mesh {
         if (this.splatRenderMode === SplatRenderMode.ThreeD) {
             const initialCovTexSpecs = getCovariancesInitialTextureSpecs(covarianceCompressionLevel);
             // TODO: Invastigate the MAX_TEXTURE_TEXELS problem...
-            if (initialCovTexSpecs.texSize.x * initialCovTexSpecs.texSize.y > MAX_TEXTURE_TEXELS && covarianceCompressionLevel === 0) {
+            if (initialCovTexSpecs.texSize.x * initialCovTexSpecs.texSize.y > Constants.MAX_TEXTURE_TEXELS && covarianceCompressionLevel === 0) {
                 covarianceCompressionLevel = 1;
             }
-            covariances = new Float32Array(maxSplatCount * COVARIANCES_ELEMENTS_PER_SPLAT);
+            covariances = new Float32Array(maxSplatCount * Constants.COVARIANCES_ELEMENTS_PER_SPLAT);
         } else {
             scales = new Float32Array(maxSplatCount * 3);
             rotations = new Float32Array(maxSplatCount * 4);
@@ -885,8 +860,8 @@ export class SplatMesh extends THREE.Mesh {
         const shData = this.minSphericalHarmonicsDegree ? new SphericalHarmonicsArrayType(maxSplatCount * shComponentCount) : undefined;
 
         // set up centers/colors data texture
-        const centersColsTexSize = computeDataTextureSize(CENTER_COLORS_ELEMENTS_PER_TEXEL, 4);
-        const paddedCentersCols = new Uint32Array(centersColsTexSize.x * centersColsTexSize.y * CENTER_COLORS_ELEMENTS_PER_TEXEL);
+        const centersColsTexSize = computeDataTextureSize(Constants.CENTER_COLORS_ELEMENTS_PER_TEXEL, 4);
+        const paddedCentersCols = new Uint32Array(centersColsTexSize.x * centersColsTexSize.y * Constants.CENTER_COLORS_ELEMENTS_PER_TEXEL);
         SplatMesh.updateCenterColorsPaddedData(0, splatCount - 1, centers, colors, paddedCentersCols);
 
         const centersColsTex = new THREE.DataTexture(paddedCentersCols, centersColsTexSize.x, centersColsTexSize.y,
@@ -922,8 +897,8 @@ export class SplatMesh extends THREE.Mesh {
 
             let CovariancesDataType = covarianceCompressionLevel >= 1 ? Uint32Array : Float32Array;
             const covariancesElementsPerTexelAllocated = covarianceCompressionLevel >= 1 ?
-                                                         COVARIANCES_ELEMENTS_PER_TEXEL_COMPRESSED_ALLOCATED :
-                                                         COVARIANCES_ELEMENTS_PER_TEXEL_ALLOCATED;
+                                                         Constants.COVARIANCES_ELEMENTS_PER_TEXEL_COMPRESSED_ALLOCATED :
+                                                         Constants.COVARIANCES_ELEMENTS_PER_TEXEL_ALLOCATED;
             const covariancesTextureData = new CovariancesDataType(covTexSize.x * covTexSize.y * covariancesElementsPerTexelAllocated);
 
             if (covarianceCompressionLevel === 0) {
@@ -964,11 +939,11 @@ export class SplatMesh extends THREE.Mesh {
         } else {
             // set up scale & rotations data texture
             const elementsPerSplat = 6;
-            const scaleRotationsTexSize = computeDataTextureSize(SCALES_ROTATIONS_ELEMENTS_PER_TEXEL, elementsPerSplat);
+            const scaleRotationsTexSize = computeDataTextureSize(Constants.SCALES_ROTATIONS_ELEMENTS_PER_TEXEL, elementsPerSplat);
             let ScaleRotationsDataType = scaleRotationCompressionLevel >= 1 ? Uint16Array : Float32Array;
             let scaleRotationsTextureType = scaleRotationCompressionLevel >= 1 ? THREE.HalfFloatType : THREE.FloatType;
             const paddedScaleRotations = new ScaleRotationsDataType(scaleRotationsTexSize.x * scaleRotationsTexSize.y *
-                                                                    SCALES_ROTATIONS_ELEMENTS_PER_TEXEL);
+                                                                    Constants.SCALES_ROTATIONS_ELEMENTS_PER_TEXEL);
 
             SplatMesh.updateScaleRotationsPaddedData(0, splatCount - 1, scales, rotations, paddedScaleRotations);
 
@@ -996,7 +971,7 @@ export class SplatMesh extends THREE.Mesh {
             let shTexSize = computeDataTextureSize(shElementsPerTexel, paddedSHComponentCount);
 
             // Use one texture for all spherical harmonics data
-            if (shTexSize.x * shTexSize.y <= MAX_TEXTURE_TEXELS) {
+            if (shTexSize.x * shTexSize.y <= Constants.MAX_TEXTURE_TEXELS) {
                 const paddedSHArraySize = shTexSize.x * shTexSize.y * shElementsPerTexel;
                 const paddedSHArray = new SphericalHarmonicsArrayType(paddedSHArraySize);
                 for (let c = 0; c < splatCount; c++) {
@@ -1079,9 +1054,9 @@ export class SplatMesh extends THREE.Mesh {
             this.material.uniformsNeedUpdate = true;
         }
 
-        const sceneIndexesTexSize = computeDataTextureSize(SCENE_INDEXES_ELEMENTS_PER_TEXEL, 4);
+        const sceneIndexesTexSize = computeDataTextureSize(Constants.SCENE_INDEXES_ELEMENTS_PER_TEXEL, 4);
         const paddedTransformIndexes = new Uint32Array(sceneIndexesTexSize.x *
-                                                       sceneIndexesTexSize.y * SCENE_INDEXES_ELEMENTS_PER_TEXEL);
+                                                       sceneIndexesTexSize.y * Constants.SCENE_INDEXES_ELEMENTS_PER_TEXEL);
         for (let c = 0; c < splatCount; c++) paddedTransformIndexes[c] = this.globalSplatIndexToSceneIndexMap[c];
         const sceneIndexesTexture = new THREE.DataTexture(paddedTransformIndexes, sceneIndexesTexSize.x, sceneIndexesTexSize.y,
                                                           THREE.RedIntegerFormat, THREE.UnsignedIntType);
@@ -1147,21 +1122,20 @@ export class SplatMesh extends THREE.Mesh {
             centerColorsTexture.needsUpdate = true;
         } else {
             this.updateDataTexture(paddedCenterColors, centerColorsTextureDescriptor.texture, centerColorsTextureDescriptor.size,
-                                   centerColorsTextureProps, CENTER_COLORS_ELEMENTS_PER_TEXEL, CENTER_COLORS_ELEMENTS_PER_SPLAT, 4,
-                                   fromSplat, toSplat);
+                                   centerColorsTextureProps, Constants.CENTER_COLORS_ELEMENTS_PER_TEXEL, Constants.CENTER_COLORS_ELEMENTS_PER_SPLAT,
+                     4, fromSplat, toSplat);
         }
 
         // update covariance data texture
         if (covarancesTextureDesc) {
             performance.mark("Covariance-texture-upload-started")
             const covariancesTexture = covarancesTextureDesc.texture;
-            const covarancesStartElement = fromSplat * COVARIANCES_ELEMENTS_PER_SPLAT;
-            const covariancesEndElement = toSplat * COVARIANCES_ELEMENTS_PER_SPLAT;
+            const covarancesStartElement = fromSplat * Constants.COVARIANCES_ELEMENTS_PER_SPLAT;
+            const covariancesEndElement = toSplat * Constants.COVARIANCES_ELEMENTS_PER_SPLAT;
 
             if (covarianceCompressionLevel === 0) {
                 for (let i = covarancesStartElement; i <= covariancesEndElement; i++) {
-                    const covariance = this.splatDataTextures.baseData.covariances[i];
-                    covarancesTextureDesc.data[i] = covariance;
+                    covarancesTextureDesc.data[i] = this.splatDataTextures.baseData.covariances[i];
                 }
             } else {
                 SplatMesh.updatePaddedCompressedCovariancesTextureData(this.splatDataTextures.baseData.covariances,
@@ -1179,7 +1153,7 @@ export class SplatMesh extends THREE.Mesh {
                 if (covarianceCompressionLevel === 0) {
                     this.updateDataTexture(covarancesTextureDesc.data, covarancesTextureDesc.texture, covarancesTextureDesc.size,
                                            covariancesTextureProps, covarancesTextureDesc.elementsPerTexelStored,
-                                           COVARIANCES_ELEMENTS_PER_SPLAT, 4, fromSplat, toSplat);
+                                           Constants.COVARIANCES_ELEMENTS_PER_SPLAT, 4, fromSplat, toSplat);
                 } else {
                     this.updateDataTexture(covarancesTextureDesc.data, covarancesTextureDesc.texture, covarancesTextureDesc.size,
                                            covariancesTextureProps, covarancesTextureDesc.elementsPerTexelAllocated,
@@ -1207,7 +1181,7 @@ export class SplatMesh extends THREE.Mesh {
                 scaleRotationsTexture.needsUpdate = true;
             } else {
                 this.updateDataTexture(paddedScaleRotations, scaleRotationsTextureDesc.texture, scaleRotationsTextureDesc.size,
-                                       scaleRotationsTextureProps, SCALES_ROTATIONS_ELEMENTS_PER_TEXEL, elementsPerSplat, bytesPerElement,
+                                       scaleRotationsTextureProps, Constants.SCALES_ROTATIONS_ELEMENTS_PER_TEXEL, elementsPerSplat, bytesPerElement,
                                        fromSplat, toSplat);
             }
         }
@@ -1399,7 +1373,7 @@ export class SplatMesh extends THREE.Mesh {
         if (!sinceLastBuildOnly) {
             const avgCenter = new THREE.Vector3();
             this.scenes.forEach((scene) => {
-                avgCenter.add(scene.splatBuffer.sceneCenter);
+                avgCenter.add(scene.splatBuffer.getSceneCenter());
             });
             avgCenter.multiplyScalar(1.0 / this.scenes.length);
             this.calculatedSceneCenter.copy(avgCenter);
@@ -1414,17 +1388,17 @@ export class SplatMesh extends THREE.Mesh {
             if (distFromCSceneCenter > this.maxSplatDistanceFromSceneCenter) this.maxSplatDistanceFromSceneCenter = distFromCSceneCenter;
         }
 
-        if (this.maxSplatDistanceFromSceneCenter - this.visibleRegionBufferRadius > VISIBLE_REGION_EXPANSION_DELTA) {
+        if (this.maxSplatDistanceFromSceneCenter - this.visibleRegionBufferRadius > Constants.VISIBLE_REGION_EXPANSION_DELTA) {
             this.visibleRegionBufferRadius = this.maxSplatDistanceFromSceneCenter;
-            this.visibleRegionRadius = Math.max(this.visibleRegionBufferRadius - VISIBLE_REGION_EXPANSION_DELTA, 0.0);
+            this.visibleRegionRadius = Math.max(this.visibleRegionBufferRadius - Constants.VISIBLE_REGION_EXPANSION_DELTA, 0.0);
         }
         if (this.finalBuild) this.visibleRegionRadius = this.visibleRegionBufferRadius = this.maxSplatDistanceFromSceneCenter;
         this.updateVisibleRegionFadeDistance();
     }
 
     updateVisibleRegionFadeDistance(sceneRevealMode = SceneRevealMode.Default) {
-        const fastFadeRate = SCENE_FADEIN_RATE_FAST * this.sceneFadeInRateMultiplier;
-        const gradualFadeRate = SCENE_FADEIN_RATE_GRADUAL * this.sceneFadeInRateMultiplier;
+        const fastFadeRate = Constants.SCENE_FADEIN_RATE_FAST * this.sceneFadeInRateMultiplier;
+        const gradualFadeRate = Constants.SCENE_FADEIN_RATE_GRADUAL * this.sceneFadeInRateMultiplier;
         const defaultFadeInRate = this.finalBuild ? fastFadeRate : gradualFadeRate;
         const fadeInRate = sceneRevealMode === SceneRevealMode.Default ? defaultFadeInRate : gradualFadeRate;
         this.visibleRegionFadeStartRadius = (this.visibleRegionRadius - this.visibleRegionFadeStartRadius) *
@@ -2043,7 +2017,7 @@ export class SplatMesh extends THREE.Mesh {
      * buffer, and the corresponding transform)
      * @param {number} globalIndex Global splat index
      * @param {object} paramsObj Object in which to store local data
-     * @param {boolean} returnSceneTransform By default, the transform of the scene to which the splat at 'globalIndex' belongs will be
+     * @param {boolean} [returnSceneTransform] By default, the transform of the scene to which the splat at 'globalIndex' belongs will be
      *                                       returned via the 'sceneTransform' property of 'paramsObj' only if the splat mesh is static.
      *                                       If 'returnSceneTransform' is true, the 'sceneTransform' property will always contain the scene
      *                                       transform, and if 'returnSceneTransform' is false, the 'sceneTransform' property will always
@@ -2070,10 +2044,12 @@ export class SplatMesh extends THREE.Mesh {
      *                                      static. If 'applySceneTransform' is true, scene transforms will always be applied and if
      *                                      it is false, they will never be applied. If undefined, the default behavior will apply.
      * @param {number} covarianceCompressionLevel The compression level for covariances in the destination array
+     * @param {number} scaleRotationCompressionLevel The compression level for scale and rotation in the destination array
      * @param {number} sphericalHarmonicsCompressionLevel The compression level for spherical harmonics in the destination array
      * @param {number} srcStart The start location from which to pull source data
      * @param {number} srcEnd The end location from which to pull source data
      * @param {number} destStart The start location from which to write data
+     * @param {number} sceneIndex The index of the scene used for fetching splat data
      */
     fillSplatDataArrays(covariances, scales, rotations, centers, colors, sphericalHarmonics, applySceneTransform,
                         covarianceCompressionLevel = 0, scaleRotationCompressionLevel = 0, sphericalHarmonicsCompressionLevel = 1,
@@ -2096,7 +2072,7 @@ export class SplatMesh extends THREE.Mesh {
         }
         for (let i = startSceneIndex; i <= endSceneIndex; i++) {
             if (applySceneTransform === undefined || applySceneTransform === null) {
-                applySceneTransform = this.dynamicMode ? false : true;
+                applySceneTransform = !this.dynamicMode;
             }
 
             const scene = this.getScene(i);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp } from '../../Util.js';
 import { UncompressedSplatArray } from '../UncompressedSplatArray.js';
-import { SplatBuffer } from '../SplatBuffer.js';
+import {KSplatHeader, SplatBuffer} from '../SplatBuffer.js';
 import { PlyParserUtils } from './PlyParserUtils.js';
 
 const BaseFieldNamesToRead = ['scale_0', 'scale_1', 'scale_2', 'rot_0', 'rot_1', 'rot_2', 'rot_3', 'x', 'y', 'z',
@@ -68,7 +68,7 @@ export class INRIAV1PlyParser {
     static parseToUncompressedSplatBufferSection(header, fromSplat, toSplat, splatData, splatDataOffset,
                                                  toBuffer, toOffset, outSphericalHarmonicsDegree = 0) {
         outSphericalHarmonicsDegree = Math.min(outSphericalHarmonicsDegree, header.sphericalHarmonicsDegree);
-        const outBytesPerSplat = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree].BytesPerSplat;
+        const outBytesPerSplat = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree].BytesPerSplat;
 
         for (let i = fromSplat; i <= toSplat; i++) {
             const parsedSplat = INRIAV1PlyParser.parseToUncompressedSplat(splatData, i, header,

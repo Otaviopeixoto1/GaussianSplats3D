@@ -1,5 +1,5 @@
 import { UncompressedSplatArray } from '../UncompressedSplatArray.js';
-import { SplatBuffer } from '../SplatBuffer.js';
+import {KSplatHeader, SplatBuffer} from '../SplatBuffer.js';
 import { clamp } from '../../Util.js';
 import * as THREE from 'three';
 
@@ -464,7 +464,7 @@ export class PlayCanvasCompressedPlyParser {
 
     PlayCanvasCompressedPlyParser.readElementData(vertexElement, vertexDataBuffer, 0, fromIndex, toIndex, propertyFilter);
 
-    const outBytesPerSplat = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[0].BytesPerSplat;
+    const outBytesPerSplat = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[0].BytesPerSplat;
 
     const { positionExtremes, scaleExtremes, colorExtremes, position, rotation, scale, color } =
       PlayCanvasCompressedPlyParser.getElementStorageArrays(chunkElement, vertexElement);
@@ -563,7 +563,7 @@ export class PlayCanvasCompressedPlyParser {
       shArrays = Object.values(sh);
     }
 
-    const outBytesPerSplat = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree].BytesPerSplat;
+    const outBytesPerSplat = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree].BytesPerSplat;
 
     const newSplat = UncompressedSplatArray.createSplat(outSphericalHarmonicsDegree);
 

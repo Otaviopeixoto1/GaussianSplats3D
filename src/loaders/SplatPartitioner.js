@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { UncompressedSplatArray } from './UncompressedSplatArray.js';
-import { SplatBuffer } from './SplatBuffer.js';
+import { KSplatHeader } from './SplatBuffer.js';
 
 export class SplatPartitioner {
 
@@ -44,7 +44,7 @@ export class SplatPartitioner {
     }
 
     static getStandardPartitioner(partitionSize = 0, sceneCenter = new THREE.Vector3(),
-                                  blockSize = SplatBuffer.BucketBlockSize, bucketSize = SplatBuffer.BucketSize) {
+                                  blockSize = KSplatHeader.BucketBlockSize, bucketSize = KSplatHeader.BucketSize) {
 
         const partitionGenerator = (splatArray) => {
 

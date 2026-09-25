@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { fetchWithProgress, delayedExecute } from '../../Util.js';
-import { SplatBuffer } from '../SplatBuffer.js';
+import {KSplatHeader, SplatBuffer} from '../SplatBuffer.js';
 import { SplatBufferGenerator } from '../SplatBufferGenerator.js';
 import { LoaderStatus } from '../LoaderStatus.js';
 import { UncompressedSplatArray } from '../UncompressedSplatArray.js';
@@ -279,7 +279,7 @@ function unpackGaussiansRange(packed, startIndex, endIndex, outSphericalHarmonic
 
         const uncompressedSplat = unpackedSplatToUncompressedSplat(splat, packed.shDegree, outSphericalHarmonicsDegree);
         if (directToSplatBuffer) {
-            const outBytesPerSplat = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree].BytesPerSplat;
+            const outBytesPerSplat = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree].BytesPerSplat;
             const outBase = i * outBytesPerSplat + outTargetOffset;
             SplatBuffer.writeSplatDataToSectionBuffer(uncompressedSplat, outTarget, outBase, 0, outSphericalHarmonicsDegree);
         } else {
@@ -466,13 +466,13 @@ export class SpzLoader {
                 // (there has to be a first build and a final build. See Viewer.downloadAndBuildSingleSplatSceneProgressiveLoad())
                 splatChunkSize = (splatChunkSize < splatCount) ? splatChunkSize : splatCount / 2;
 
-                const shDescriptor = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree];
-                const splatBufferDataOffsetBytes = SplatBuffer.HeaderSizeBytes + SplatBuffer.SectionHeaderSizeBytes;
+                const shDescriptor = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[outSphericalHarmonicsDegree];
+                const splatBufferDataOffsetBytes = KSplatHeader.HeaderSizeBytes + KSplatHeader.SectionHeaderSizeBytes;
                 const splatBufferSizeBytes = splatBufferDataOffsetBytes + shDescriptor.BytesPerSplat * splatCount;
                 const outBuffer = new ArrayBuffer(splatBufferSizeBytes);
-                SplatBuffer.writeHeaderToBuffer({
-                    versionMajor: SplatBuffer.CurrentMajorVersion,
-                    versionMinor: SplatBuffer.CurrentMinorVersion,
+                KSplatHeader.writeHeaderToBuffer({
+                    versionMajor: KSplatHeader.CurrentMajorVersion,
+                    versionMinor: KSplatHeader.CurrentMinorVersion,
                     maxSectionCount: 1,
                     sectionCount: 1,
                     maxSplatCount: splatCount,
@@ -517,7 +517,7 @@ export class SpzLoader {
                     );
 
                     if (!splatBuffer) {
-                        SplatBuffer.writeSectionHeaderToBuffer({
+                        KSplatHeader.writeSectionHeaderToBuffer({
                             maxSplatCount: splatCount,
                             splatCount: processedBaseSplatCount,
                             bucketSize: 0,
@@ -528,7 +528,7 @@ export class SpzLoader {
                             fullBucketCount: 0,
                             partiallyFilledBucketCount: 0,
                             sphericalHarmonicsDegree: outSphericalHarmonicsDegree
-                        }, 0, outBuffer, SplatBuffer.HeaderSizeBytes);
+                        }, 0, outBuffer, KSplatHeader.HeaderSizeBytes);
                         splatBuffer = new SplatBuffer(outBuffer, false);
                     }
                     splatBuffer.updateLoadedCounts(1, processedBaseSplatCount);

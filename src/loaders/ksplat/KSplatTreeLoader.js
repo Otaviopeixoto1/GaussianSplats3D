@@ -1,4 +1,4 @@
-import { SplatBuffer } from '../SplatBuffer.js';
+import {KSplatHeader, SplatBuffer} from '../SplatBuffer.js';
 import { fetchWithProgress, delayedExecute, nativePromiseWithExtractedComponents } from '../../Util.js';
 import { LoaderStatus } from '../LoaderStatus.js';
 import { Constants } from '../../Constants.js';
@@ -11,7 +11,7 @@ export class KSplatTreeBuffer {
         const ksplatBuffer = splatBuffer.bufferData;
         const treeBuffer = KSplatTreeBuffer.serializeOctreeToBuffer(subTree);
 
-        const splatBufferByteLength = SplatBuffer.calculateTotalSplatBufferSize(splatBuffer);
+        const splatBufferByteLength = KSplatHeader.calculateTotalSplatBufferSize(splatBuffer);
         console.log("TREE STORE OFFSET", splatBufferByteLength)
 
         const totalByteLength = splatBufferByteLength + treeBuffer.byteLength;
@@ -251,9 +251,9 @@ export class KSplatTreeBuffer {
 export class KSplatTreeLoader {
 
    static checkVersion(buffer) {
-        const minVersionMajor = SplatBuffer.CurrentMajorVersion;
-        const minVersionMinor = SplatBuffer.CurrentMinorVersion;
-        const header = SplatBuffer.parseHeader(buffer);
+        const minVersionMajor = KSplatHeader.CurrentMajorVersion;
+        const minVersionMinor = KSplatHeader.CurrentMinorVersion;
+        const header = KSplatHeader.parseHeaderData(buffer);
         if (header.versionMajor === minVersionMajor &&
             header.versionMinor >= minVersionMinor ||
             header.versionMajor > minVersionMajor) {
@@ -291,16 +291,16 @@ export class KSplatTreeLoader {
         const directLoadPromise = nativePromiseWithExtractedComponents();
 
         const checkAndLoadHeader = () => {
-            if (!headerLoaded && !headerLoading && numBytesLoaded >= SplatBuffer.HeaderSizeBytes) {
+            if (!headerLoaded && !headerLoading && numBytesLoaded >= KSplatHeader.HeaderSizeBytes) {
                 headerLoading = true;
                 const headerAssemblyPromise = new Blob(chunks).arrayBuffer();
                 headerAssemblyPromise.then((bufferData) => {
-                    headerBuffer = new ArrayBuffer(SplatBuffer.HeaderSizeBytes);
-                    new Uint8Array(headerBuffer).set(new Uint8Array(bufferData, 0, SplatBuffer.HeaderSizeBytes));
+                    headerBuffer = new ArrayBuffer(KSplatHeader.HeaderSizeBytes);
+                    new Uint8Array(headerBuffer).set(new Uint8Array(bufferData, 0, KSplatHeader.HeaderSizeBytes));
                     KSplatLoader.checkVersion(headerBuffer);
                     headerLoading = false;
                     headerLoaded = true;
-                    header = SplatBuffer.parseHeader(headerBuffer);
+                    header = KSplatHeader.parseHeaderData(headerBuffer);
                     window.setTimeout(() => {
                         checkAndLoadSectionHeaders();
                     }, 1);
@@ -326,16 +326,16 @@ export class KSplatTreeLoader {
                 sectionHeadersAssemblyPromise.then((bufferData) => {
                     sectionHeadersLoading = false;
                     sectionHeadersLoaded = true;
-                    sectionHeadersBuffer = new ArrayBuffer(header.maxSectionCount * SplatBuffer.SectionHeaderSizeBytes);
-                    new Uint8Array(sectionHeadersBuffer).set(new Uint8Array(bufferData, SplatBuffer.HeaderSizeBytes,
-                                                                            header.maxSectionCount * SplatBuffer.SectionHeaderSizeBytes));
-                    sectionHeaders = SplatBuffer.parseSectionHeaders(header, sectionHeadersBuffer, 0, false);
+                    sectionHeadersBuffer = new ArrayBuffer(header.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes);
+                    new Uint8Array(sectionHeadersBuffer).set(new Uint8Array(bufferData, KSplatHeader.HeaderSizeBytes,
+                                                                            header.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes));
+                    sectionHeaders = KSplatHeader.parseSectionHeaders(header, sectionHeadersBuffer, 0, false);
                     let totalSectionStorageStorageByes = 0;
                     for (let i = 0; i < header.maxSectionCount; i++) {
                         totalSectionStorageStorageByes += sectionHeaders[i].storageSizeBytes;
                     }
-                    const totalStorageSizeBytes = SplatBuffer.HeaderSizeBytes + header.maxSectionCount *
-                                                  SplatBuffer.SectionHeaderSizeBytes + totalSectionStorageStorageByes;
+                    const totalStorageSizeBytes = KSplatHeader.HeaderSizeBytes + header.maxSectionCount *
+                                                  KSplatHeader.SectionHeaderSizeBytes + totalSectionStorageStorageByes;
                     if (!directLoadBuffer) {
                         directLoadBuffer = new ArrayBuffer(totalStorageSizeBytes);
                         let offset = 0;
@@ -346,7 +346,7 @@ export class KSplatTreeLoader {
                         }
                     }
 
-                    totalBytesToDownload = SplatBuffer.HeaderSizeBytes + SplatBuffer.SectionHeaderSizeBytes * header.maxSectionCount;
+                    totalBytesToDownload = KSplatHeader.HeaderSizeBytes + KSplatHeader.SectionHeaderSizeBytes * header.maxSectionCount;
                     for (let i = 0; i <= sectionHeaders.length && i < header.maxSectionCount; i++) {
                         totalBytesToDownload += sectionHeaders[i].storageSizeBytes;
                     }
@@ -356,7 +356,7 @@ export class KSplatTreeLoader {
             };
 
             if (!sectionHeadersLoading && !sectionHeadersLoaded && headerLoaded &&
-                numBytesLoaded >= SplatBuffer.HeaderSizeBytes + SplatBuffer.SectionHeaderSizeBytes * header.maxSectionCount) {
+                numBytesLoaded >= KSplatHeader.HeaderSizeBytes + KSplatHeader.SectionHeaderSizeBytes * header.maxSectionCount) {
                 performLoad();
             }
         };
@@ -380,7 +380,7 @@ export class KSplatTreeLoader {
 
                         if (!directLoadSplatBuffer) directLoadSplatBuffer = new SplatBuffer(directLoadBuffer, false);
 
-                        const baseDataOffset = SplatBuffer.HeaderSizeBytes + SplatBuffer.SectionHeaderSizeBytes * header.maxSectionCount;
+                        const baseDataOffset = KSplatHeader.HeaderSizeBytes + KSplatHeader.SectionHeaderSizeBytes * header.maxSectionCount;
                         let sectionBase = 0;
                         let reachedSections = 0;
                         let loadedSplatCount = 0;
@@ -392,7 +392,7 @@ export class KSplatTreeLoader {
                             if (numBytesProgressivelyLoaded >= bytesRequiredToReachSectionSplatData) {
                                 reachedSections++;
                                 const bytesPastSSectionSplatDataStart = numBytesProgressivelyLoaded - bytesRequiredToReachSectionSplatData;
-                                const baseDescriptor = SplatBuffer.CompressionLevels[header.compressionLevel];
+                                const baseDescriptor = KSplatHeader.CompressionLevels[header.compressionLevel];
                                 const shDesc = baseDescriptor.SphericalHarmonicsDegrees[sectionHeader.sphericalHarmonicsDegree];
                                 const bytesPerSplat = shDesc.BytesPerSplat;
                                 let loadedSplatsForSection = Math.floor(bytesPastSSectionSplatDataStart / bytesPerSplat);

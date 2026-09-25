@@ -1,13 +1,12 @@
 /* eslint-disable */
 import * as THREE from 'three';
 import { delayedExecute } from '../Util.js';
-import {SceneFormat} from "../loaders/SceneFormat.js";
-import {KSplatTreeBuffer, KSplatTreeLoader} from "../loaders/ksplat/KSplatTreeLoader.js";
-import {SplatBuffer} from "../loaders/SplatBuffer.js";
+import { SceneFormat } from "../loaders/SceneFormat.js";
+import { KSplatTreeBuffer } from "../loaders/ksplat/KSplatTreeLoader.js";
+import { KSplatHeader } from "../loaders/SplatBuffer.js";
 import { StatsCollector } from '../../util/StatsCollector.js';
 
 export class SplatTreeNode {
-
 
     constructor(min, max, depth, id) {
         //TODO: remove redundant min and max values
@@ -33,7 +32,6 @@ export class SplatSubTree {
         this.sceneMin = new THREE.Vector3();
         this.sceneMax = new THREE.Vector3();
         this.rootNode = null;
-        this.nodesWithIndexes = [];
         this.splatMesh = null;
     }
 
@@ -74,17 +72,6 @@ export class SplatSubTree {
             }
         };
 
-        /**
-         * TODO: Refactor. Do the traversal at rendering/sorting time
-         */
-
-        convertedSubTree.nodesWithIndexes = [];
-        visitLeavesFromNode(convertedSubTree.rootNode, (node) => {
-            if (node.data && node.data.indexes && node.data.indexes.length > 0) {
-                convertedSubTree.nodesWithIndexes.push(node);
-            }
-        });
-
         return convertedSubTree;
     }
 }
@@ -117,7 +104,6 @@ function createSplatTreeWorker(self) {
             this.sceneMax = [];
             this.rootNode = null;
             this.addedIndexes = {};
-            this.nodesWithIndexes = [];
             this.splatMesh = null;
             this.disposed = false;
         }
@@ -156,7 +142,6 @@ function createSplatTreeWorker(self) {
                 if (a > b) return 1;
                 else return -1;
             });
-            tree.nodesWithIndexes.push(node);
             return currentId;
         }
 
@@ -644,14 +629,13 @@ export class SplatTree {
 
                         if (sceneOptions.format === SceneFormat.KSTree) {
                             // .kstree files already have the octree stored in them
-                            const offset = SplatBuffer.calculateTotalSplatBufferSize(scene.splatBuffer);
+                            const offset = KSplatHeader.calculateTotalSplatBufferSize(scene.splatBuffer);
                             const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(scene.splatBuffer.bufferData, offset);
                             const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
                             subtree.sceneDimensions = new THREE.Vector3();
                             subtree.sceneMin = subTreeRoot.min;
                             subtree.sceneMax = subTreeRoot.max;
                             subtree.rootNode = subTreeRoot;
-                            subtree.nodesWithIndexes = [subTreeRoot];
                             subtree.splatMesh = splatMesh;
                             this.subTrees.push(subtree);
                         } else {

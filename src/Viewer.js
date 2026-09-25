@@ -308,6 +308,9 @@ export class Viewer {
                                        this.halfPrecisionCovariancesOnGPU, this.devicePixelRatio, this.gpuAcceleratedSort,
                                        this.integerBasedSort, this.antialiased, this.maxScreenSpaceSplatSize, this.logLevel,
                                        this.sphericalHarmonicsDegree, this.sceneFadeInRateMultiplier, this.kernel2DSize);
+
+        //TODO: Create a DynamicSplatMesh here depending on the options (must toggle dynamic mesh)
+
         this.splatMesh.frustumCulled = false;
         if (this.onSplatMeshChangedCallback) this.onSplatMeshChangedCallback();
     }
@@ -770,6 +773,22 @@ export class Viewer {
             throw new Error('Cannot add splat scene after dispose() is called.');
         }
 
+        //
+        // TODO: Rework Scene Load:
+        //  -If its .kstree, load it progressively (Fix stutter)...
+        //  -Replace the addSplatScene method with the addSplatScenes or standardize them
+        //  -Make progressive load the default but keep old behavior (ply would still be the completely loaded...)
+        //
+        // TODO Steps
+        //  -First, if we have kstree, simply divert the path to load progressively. Only read the headers
+        //  -> Make a VirtualSplatBuffer abstraction that takes care of finding the file offsets for loading the data
+        //  --FIRST MAKE IT LOAD ALL IN PIECES... TO TEST GPU UPLOAD
+        //  --init the sort worker with what is loaded, send the data to it without copy...
+        //  --Still preload the gpu buffers exactly as we have it now but keep updating as we get updates
+        //  -> THEN MAKE THE CPUAllocator and GPUAllocator CLASSESS TO MANAGE PHYSICAL ALLOCATIONS
+        //
+
+
         if (options.progressiveLoad && this.splatMesh.scenes && this.splatMesh.scenes.length > 0) {
             console.log('addSplatScene(): "progressiveLoad" option ignore because there are multiple splat scenes');
             options.progressiveLoad = false;
@@ -1013,6 +1032,33 @@ export class Viewer {
             throw new Error('Cannot add splat scene after dispose() is called.');
         }
 
+        //
+        // TODO: Rework Scene Load:
+        //  -Firstly: SplatScene will now hold both SplatBuffer | VirtualSplatBuffer and SplatSubTree
+        //  -If its .kstree, load it progressively (Fix stutter)...
+        //  -Replace the addSplatScene method with the addSplatScenes or standardize them
+        //  -Make progressive load the default but keep old behavior (ply would still be the completely loaded...)
+        //  -Finally make a simplified DynamicScene where objects can be added and removed more easily
+        //  --Dynamic scenes will initially be managed by a dynamic SplatMesh, which stores DynamicScenes
+        //  ---This way we can keep backward compatibility
+        //  --DynamicScene will REQUIRE resource paths to .kstree format for loading objects
+        //  --kstrees dont necessarily always get put in a DynamicScene
+        //  --DynamicScene will just need the resource paths and will run the requests by itself
+        //  --DynamicScene should hold VirtualSplatBuffer[] rather than just a regular SplatBuffer | VirtualSplatBuffer
+        //
+        //
+        //
+        // TODO Steps
+        //  -Rework SplatScene to hold the SplatBuffer and SplatSubTree Refs for better organization
+        //  -TO START OFF fix the load promises to create a new path that doesnt download the full .kstree buffers
+        //  -Only read the headers and for now make a simple SplatNodeManager that just prealloc all memory it needs
+        //  -> Make a VirtualSplatBuffer abstraction that takes care of finding the file offsets for loading the data
+        //  -- FIRST MAKE IT LOAD ALL IN PIECES... TO TEST GPU UPLOAD
+        //  -- init the sort worker with what is loaded, SEND DATA TO/FROM WORKER WITHOUT COPY...
+        //  -- Still preload the gpu buffers exactly as we have it now but keep updating as we get updates
+        //  -> THEN MAKE THE SplatNodeManager and GPUAllocator MANAGE PHYSICAL ALLOCATIONS
+        //
+
         const fileCount = sceneOptions.length;
         const percentComplete = [];
 
@@ -1093,7 +1139,7 @@ export class Viewer {
      * @param {function} onProgress Function to be called as file data are received
      * @param {boolean} progressiveBuild Construct file sections into splat buffers as they are downloaded
      * @param {function} onSectionBuilt Function to be called when new section is added to the file
-     * @param {string} format File format of the scene
+     * @param {SceneFormat} format File format of the scene
      * @param {object} headers Optional HTTP headers to pass to use for downloading splat scene
      * @return {AbortablePromise}
      */
@@ -1107,6 +1153,8 @@ export class Viewer {
             } else if (format === SceneFormat.KSplat || format === SceneFormat.KSTree) { //TODO: add ksplatTree
                 if (format === SceneFormat.KSTree) {
                     progressiveBuild = false;
+                    //TODO: return a VirtualSplatBuffer
+                    // this virtual buffer will only work for getting the offsets into the data we need to load
                 } else {
                 }
                 return KSplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);

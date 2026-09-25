@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SplatBuffer } from '../SplatBuffer.js';
+import { KSplatHeader } from '../SplatBuffer.js';
 import { UncompressedSplatArray } from '../UncompressedSplatArray.js';
 
 export class SplatParser {
@@ -12,10 +12,10 @@ export class SplatParser {
 
     static parseToUncompressedSplatBufferSection(fromSplat, toSplat, fromBuffer, fromOffset, toBuffer, toOffset) {
 
-        const outBytesPerCenter = SplatBuffer.CompressionLevels[0].BytesPerCenter;
-        const outBytesPerScale = SplatBuffer.CompressionLevels[0].BytesPerScale;
-        const outBytesPerRotation = SplatBuffer.CompressionLevels[0].BytesPerRotation;
-        const outBytesPerSplat = SplatBuffer.CompressionLevels[0].SphericalHarmonicsDegrees[0].BytesPerSplat;
+        const outBytesPerCenter = KSplatHeader.CompressionLevels[0].BytesPerCenter;
+        const outBytesPerScale = KSplatHeader.CompressionLevels[0].BytesPerScale;
+        const outBytesPerRotation = KSplatHeader.CompressionLevels[0].BytesPerRotation;
+        const outBytesPerSplat = KSplatHeader.CompressionLevels[0].SphericalHarmonicsDegrees[0].BytesPerSplat;
 
         for (let i = fromSplat; i <= toSplat; i++) {
             const inBase = i * SplatParser.RowSizeBytes + fromOffset;
