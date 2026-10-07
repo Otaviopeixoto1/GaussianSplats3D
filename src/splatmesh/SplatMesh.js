@@ -466,13 +466,13 @@ export class SplatMesh extends THREE.Mesh {
 
                     //TODO: Support multiple splat sections ?
                     // the case of sections with different compression levels has to be resolved
-                    if (splatBuffer.sections.length > 1) {
+                    if (splatBuffer.header.sections.length > 1) {
                         console.warn("GaussianSplats3D: Multi-section SplatBuffers are NOT currently supported !!")
                     }
 
                     //ALL data will be moved to a single Splat Section
                     const splatSectionId = 0;
-                    const splatSection = splatBuffer.sections[splatSectionId];
+                    const splatSection = splatBuffer.header.sections[splatSectionId];
                     const bytesPerSplat = splatSection.bytesPerSplat;
                     const splatCount = splatBuffer.getSplatCount();
 
