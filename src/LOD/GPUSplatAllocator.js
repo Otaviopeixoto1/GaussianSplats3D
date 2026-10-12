@@ -7,12 +7,10 @@ import {SplatMaterial2D} from "../splatmesh/SplatMaterial2D.js";
 import {getSphericalHarmonicsComponentCountForDegree} from "../Util.js";
 import {WebGLExtensions} from "../three-shim/WebGLExtensions.js";
 import {WebGLCapabilities} from "../three-shim/WebGLCapabilities.js";
+import {SplatDataPacking} from "./SplatDataPacking.js";
 
 
 
-
-
-//TODO: Use this class to store the pages and allocation for each texture
 class PagedTexture {
 
     /**
@@ -52,12 +50,12 @@ class PagedTexture {
      */
     makeAlloc(startPage, numPages) {
         const data = this.getData();
-        const dataStart = startPage * this.elementsPerPage;
-        const updateElementCount = this.elementsPerPage * numPages;
+        const byteOffset = data.byteOffset + startPage * this.elementsPerPage * this.bytesPerElement;
+        const byteLength = numPages * this.elementsPerPage * this.bytesPerElement;
         const updateDataView = new data.constructor(
             data.buffer,
-            dataStart * this.bytesPerElement,
-            updateElementCount
+            byteOffset,
+            byteLength / data.BYTES_PER_ELEMENT
         );
 
         return {
@@ -91,12 +89,14 @@ class PagedTexture {
                     } else {
                         removedAllocs.push(i);
                     }
+                    break;
                 }
             }
 
             // TODO: Use a better data structure for storing free allocs
-            for (const removedId of removedAllocs) {
-                this._freeAllocs.splice(removedId, 1);
+            // For now we iterate back to front for faster removal ...
+            for (let r = removedAllocs.length - 1; r >= 0; r--) {
+                this._freeAllocs.splice(removedAllocs[r], 1);
             }
 
             return alloc;
@@ -110,6 +110,15 @@ class PagedTexture {
     freePages(allocations) {
         //TODO: Free the given allocation list
         this._freeAllocs.push(...allocations);
+    }
+
+    /**
+     * Returns the index of the first texel of an allocation.
+     * @param {Object} allocation
+     * @return {number}
+     */
+    getAllocationStartTexel(allocation) {
+        return allocation.startPage * this.texelsPerPage;
     }
 
     /**
@@ -128,9 +137,13 @@ class PagedTexture {
 
 
         const updateHeight = allocation.endPage - allocation.startPage;
-
         const currentTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
         gl.bindTexture(gl.TEXTURE_2D, textureProps.__webglTexture);
+        // three.js leaves the unpack state of the last texture it uploaded (an image texture uploads with FLIP_Y = true),
+        // make sure this is a plain copy:
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
         gl.texSubImage2D(
             gl.TEXTURE_2D,
             0,
@@ -142,16 +155,28 @@ class PagedTexture {
         );
         gl.bindTexture(gl.TEXTURE_2D, currentTexture);
     }
+
+    dispose() {
+        if (this.texture) {
+            this.texture.dispose();
+            this.texture = null;
+        }
+        this._freeAllocs = [];
+    }
 }
 
 export class SplatStagingBuffer {
-    constructor(allocator, centersColorsAlloc, covariancesAlloc, scaleRotationsAlloc, shAlloc, sceneIndexesAlloc) {
+    constructor(allocator, splatOffset, splatCount, centersColorsAlloc, covariancesAlloc, scaleRotationsAlloc, shAlloc, sceneIndexesAlloc) {
         this.allocator = allocator;
+        // Global splat index (the value used in the splat index buffer) of the first splat of this allocation
+        this.splatOffset = splatOffset;
+        this.splatCount = splatCount;
         this.centerColorsAllocation = centersColorsAlloc;
         this.covariancesAllocation = covariancesAlloc;
         this.scaleRotationsAllocation = scaleRotationsAlloc;
         this.sphericalHarmonicsAllocation = shAlloc;
         this.sceneIndexesAllocation = sceneIndexesAlloc;
+        this.freed = false;
     }
 
     get centerColorsBuffer() {
@@ -159,23 +184,53 @@ export class SplatStagingBuffer {
     }
 
     get covariancesBuffer() {
-        return this.covariancesAllocation.view;
+        return this.covariancesAllocation ? this.covariancesAllocation.view : undefined;
     }
 
     get scaleRotationsBuffer() {
-        return this.scaleRotationsAllocation.view;
+        return this.scaleRotationsAllocation ? this.scaleRotationsAllocation.view : undefined;
     }
 
     get sphericalHarmonicsBuffer() {
-        return this.sphericalHarmonicsAllocation.view;
+        return this.sphericalHarmonicsAllocation ? this.sphericalHarmonicsAllocation.view : undefined;
     }
 
     get sceneIndexesBuffer() {
         return this.sceneIndexesAllocation.view;
     }
 
+    /**
+     * Copies packed node data into the staging views. For changes to apply to the GPU texture, call submit()
+     * @param {Object} nodeData
+     * @param {number} sceneIndex scene index for this node
+     */
+    writeNodeData(nodeData, sceneIndex) {
+        const count = nodeData.splatCount;
+        const elementsPerSplat = SplatDataPacking.getElementsPerSplat(this.allocator.getSplatDataFormat());
+
+        this.centerColorsBuffer.set(nodeData.centerColors.subarray(0, count * elementsPerSplat.centerColors));
+
+        if (this.covariancesAllocation) {
+            const covariances = nodeData.covariances.subarray(0, count * elementsPerSplat.covariances);
+            this.covariancesBuffer.set(covariances);
+        }
+
+        if (this.scaleRotationsAllocation) {
+            this.scaleRotationsBuffer.set(nodeData.scaleRotations.subarray(0, count * elementsPerSplat.scaleRotations));
+        }
+
+        // TODO: SUPPORT Spherical Harmonics
+
+        this.sceneIndexesBuffer.fill(sceneIndex, 0, count);
+    }
+
     // Finishes all changes and upload them to the GPU
     submit() {
+        if (this.freed) {
+            console.error(new Error("SplatStagingBuffer::submit: allocation was already freed !!!"));
+            return;
+        }
+
         this.allocator.submitSplatAllocation("centerColors", this.centerColorsAllocation);
 
         // 3D vs 2D:
@@ -219,7 +274,11 @@ export class GPUSplatAllocator {
         // Splat Data textures:
         this.splatTextureDescriptors = {};
 
+        // Compression
+        this.covarianceCompressionLevel = halfPrecisionCovariancesOnGPU ? 1 : 0;
 
+        //Scale + Rotations compression is fixed for now 
+        this.scaleRotationCompressionLevel = 0;
     }
 
     /**
@@ -242,7 +301,7 @@ export class GPUSplatAllocator {
      * @param {SplatMaterial3D | SplatMaterial2D} splatMaterial
      * @param {number} maxSplats
      */
-    setup(renderer, splatMaterial , maxSplats) {
+    setup(renderer, splatMaterial, maxSplats) {
         //
         //
         //TODO: just initialize/preallocate the textures but dont upload anything into it yet
@@ -272,7 +331,6 @@ export class GPUSplatAllocator {
         };
 
         let covarianceCompressionLevel = this.halfPrecisionCovariancesOnGPU ? 1 : 0;
-        const scaleRotationCompressionLevel = 0;
         const shCompressionLevel = this.shCompressionLevel;
 
         if (this.splatRenderMode === SplatRenderMode.ThreeD) {
@@ -282,6 +340,7 @@ export class GPUSplatAllocator {
                 covarianceCompressionLevel = 1;
             }
         }
+        this.covarianceCompressionLevel = covarianceCompressionLevel;
 
         // TODO: Add SH support
         // let SphericalHarmonicsArrayType = Float32Array;
@@ -307,7 +366,6 @@ export class GPUSplatAllocator {
             THREE.UnsignedIntType
         );
         centersColorsTexture.internalFormat = 'RGBA32UI';
-        // centersColorsTexture.needsUpdate = true;
         this.material.uniforms.centersColorsTexture.value = centersColorsTexture;
         this.material.uniforms.centersColorsTextureSize.value.copy(centersColsTexSize);
         this.material.uniformsNeedUpdate = true;
@@ -316,6 +374,8 @@ export class GPUSplatAllocator {
         const centersColorsElementsPerSplat = Constants.CENTER_COLORS_ELEMENTS_PER_SPLAT;
         const centersColorsBytesPerElement = 4;
 
+        // initTexture() only creates the GL texture if the texture is marked for update (version > 0).
+        centersColorsTexture.needsUpdate = true;
         this.renderer.initTexture(centersColorsTexture);
         this.splatTextureDescriptors = {
             'centerColors': {
@@ -340,8 +400,9 @@ export class GPUSplatAllocator {
             let CovariancesDataType = covarianceCompressionLevel >= 1 ? Uint32Array : Float32Array;
             const covariancesElementsPerTexelAllocated =
                 covarianceCompressionLevel >= 1 ? Constants.COVARIANCES_ELEMENTS_PER_TEXEL_COMPRESSED_ALLOCATED
-                                                : Constants.COVARIANCES_ELEMENTS_PER_TEXEL_ALLOCATED;
-            const covariancesTextureData = new CovariancesDataType(covTexSize.x * covTexSize.y * covariancesElementsPerTexelAllocated);
+                    : Constants.COVARIANCES_ELEMENTS_PER_TEXEL_ALLOCATED;
+            const covariancesArrayElementsPerTexel = covarianceCompressionLevel >= 1 ? 4 : covariancesElementsPerTexelAllocated;
+            const covariancesTextureData = new CovariancesDataType(covTexSize.x * covTexSize.y * covariancesArrayElementsPerTexel);
 
             // TODO: Remove. Move packing logic elsewhere
             // if (covarianceCompressionLevel === 0) {
@@ -380,7 +441,6 @@ export class GPUSplatAllocator {
                 this.material.uniforms.covariancesTextureHalfFloat.value = dummyTex;
                 dummyTex.needsUpdate = true;
             }
-            // covariancesTexture.needsUpdate = true;
 
             this.material.uniforms.covariancesAreHalfFloat.value = (covarianceCompressionLevel >= 1) ? 1 : 0;
             this.material.uniforms.covariancesTextureSize.value.copy(covTexSize);
@@ -389,6 +449,7 @@ export class GPUSplatAllocator {
             const covarianceElementsPerSplat = (covarianceCompressionLevel === 0) ? Constants.COVARIANCES_ELEMENTS_PER_SPLAT : covariancesElementsPerTexelAllocated;
             const covarianceBytesPerElement = (covarianceCompressionLevel === 0) ? 4 : 2;
 
+            covariancesTexture.needsUpdate = true;
             this.renderer.initTexture(covariancesTexture);
             this.splatTextureDescriptors['covariances'] = {
                 'texture': new PagedTexture(covariancesTexture, this.webGLUtils, covarianceElementsPerTexel, covarianceBytesPerElement),
@@ -404,8 +465,8 @@ export class GPUSplatAllocator {
             //
             const scaleRotationElementsPerSplat = 6;
             const scaleRotationsTexSize = computeDataTextureSize(Constants.SCALES_ROTATIONS_ELEMENTS_PER_TEXEL, scaleRotationElementsPerSplat);
-            let ScaleRotationsDataType = scaleRotationCompressionLevel >= 1 ? Uint16Array : Float32Array;
-            let scaleRotationsTextureType = scaleRotationCompressionLevel >= 1 ? THREE.HalfFloatType : THREE.FloatType;
+            let ScaleRotationsDataType = this.scaleRotationCompressionLevel >= 1 ? Uint16Array : Float32Array;
+            let scaleRotationsTextureType = this.scaleRotationCompressionLevel >= 1 ? THREE.HalfFloatType : THREE.FloatType;
             const paddedScaleRotations = new ScaleRotationsDataType(scaleRotationsTexSize.x * scaleRotationsTexSize.y * Constants.SCALES_ROTATIONS_ELEMENTS_PER_TEXEL);
 
             // TODO: Remove. Move packing logic elsewhere
@@ -417,19 +478,18 @@ export class GPUSplatAllocator {
                 THREE.RGBAFormat,
                 scaleRotationsTextureType
             );
-            // scaleRotationsTexture.needsUpdate = true;
 
-            //Constants.SCALES_ROTATIONS_ELEMENTS_PER_TEXEL, 6, scaleRotationCompressionLevel === 0 ? 4 : 2
             this.material.uniforms.scaleRotationsTexture.value = scaleRotationsTexture;
             this.material.uniforms.scaleRotationsTextureSize.value.copy(scaleRotationsTexSize);
 
             const scaleRotationElementsPerTexel = Constants.SCALES_ROTATIONS_ELEMENTS_PER_TEXEL;
-            const scaleRotationBytesPerElement = scaleRotationCompressionLevel === 0 ? 4 : 2
+            const scaleRotationBytesPerElement = this.scaleRotationCompressionLevel === 0 ? 4 : 2
 
+            scaleRotationsTexture.needsUpdate = true;
             this.renderer.initTexture(scaleRotationsTexture);
             this.splatTextureDescriptors['scaleRotations'] = {
                 'texture': new PagedTexture(scaleRotationsTexture, this.webGLUtils, scaleRotationElementsPerTexel, scaleRotationBytesPerElement),
-                'compressionLevel': scaleRotationCompressionLevel,
+                'compressionLevel': this.scaleRotationCompressionLevel,
                 'elementsPerTexel': scaleRotationElementsPerTexel,
                 'elementsPerSplat': scaleRotationElementsPerSplat,
                 'texelsPerSplat': scaleRotationElementsPerSplat / scaleRotationElementsPerTexel,
@@ -545,7 +605,6 @@ export class GPUSplatAllocator {
             THREE.UnsignedIntType
         );
         sceneIndexesTexture.internalFormat = 'R32UI';
-        // sceneIndexesTexture.needsUpdate = true;
         this.material.uniforms.sceneIndexesTexture.value = sceneIndexesTexture;
         this.material.uniforms.sceneIndexesTextureSize.value.copy(sceneIndexesTexSize);
         this.material.uniformsNeedUpdate = true;
@@ -554,6 +613,8 @@ export class GPUSplatAllocator {
         const sceneIndexesElementsPerSplat = 1; // 4 TODO: THIS IS WRONG PROBABLY -> should be 1
         const sceneIndexesBytesPerElement = 4;
 
+        // initTexture() only creates the GL texture if the texture is marked for update (version > 0).
+        sceneIndexesTexture.needsUpdate = true;
         this.renderer.initTexture(sceneIndexesTexture);
         this.splatTextureDescriptors['sceneIndexes'] = {
             'texture': new PagedTexture(sceneIndexesTexture, this.webGLUtils, sceneIndexesElementsPerTexel, sceneIndexesBytesPerElement),
@@ -565,7 +626,12 @@ export class GPUSplatAllocator {
         };
 
         //TODO: Update Scene count dynamically instead of only here:
-        //this.material.uniforms.sceneCount.value = this.scenes.length;
+        this.setSceneCount(0);
+
+        this.splatAllocationGranularity = this.computeSplatAllocationGranularity();
+        if (this.logLevel >= LogLevel.Info) {
+            console.log(`GPUSplatAllocator: allocation granularity ${this.splatAllocationGranularity} splats`);
+        }
     }
 
     disposeTextures() {
@@ -582,50 +648,163 @@ export class GPUSplatAllocator {
     }
 
     /**
+     * The GPU layout that data written into a SplatStagingBuffer must have.
+     * Pass this to VirtualSplatBuffer.getSplatNodeData().
+     * @return {SplatDataFormat}
+     */
+    getSplatDataFormat() {
+        return {
+            splatRenderMode: this.splatRenderMode,
+            covarianceCompressionLevel: this.covarianceCompressionLevel,
+            scaleRotationCompressionLevel: this.scaleRotationCompressionLevel
+        };
+    }
+
+    /**
+     * @param {number} sceneCount number of scenes that write into the scene indexes texture. The shader only reads
+     *                            the scene indexes texture when there is more than one scene.
+     */
+    setSceneCount(sceneCount) {
+        this.material.uniforms.sceneCount.value = sceneCount;
+        this.material.uniformsNeedUpdate = true;
+    }
+
+    /**
+     * All textures are paged independently but are addressed with the same splat index in the shaders, so every
+     * allocation must start at the same splat index in every texture. That holds as long as every allocation is a
+     * whole number of pages in every texture. This returns the smallest splat count with that property: one page
+     * (4096 splats) when every texture stores a whole number of texels per splat, 8192 splats when uncompressed
+     * covariances / 2D scale-rotations are used (1.5 texels per splat: 8192 splats = 2 + 3 pages).
+     * @return {number}
+     */
+    computeSplatAllocationGranularity() {
+        const centerColorsDesc = this.splatTextureDescriptors['centerColors'];
+        const splatsPerCenterPage = centerColorsDesc.texture.texelsPerPage / centerColorsDesc.texelsPerSplat;
+        let granularity = splatsPerCenterPage;
+        const isWholePages = (splats) => {
+            for (const name in this.splatTextureDescriptors) {
+                const desc = this.splatTextureDescriptors[name];
+                const texels = splats * desc.texelsPerSplat;
+                if (!Number.isInteger(texels) || texels % desc.texture.texelsPerPage !== 0) return false;
+            }
+            return true;
+        };
+        while (!isWholePages(granularity)) {
+            granularity += splatsPerCenterPage;
+            if (granularity > splatsPerCenterPage * 64) {
+                throw new Error('GPUSplatAllocator: could not find a common allocation granularity for the data textures');
+            }
+        }
+        return granularity;
+    }
+
+    /**
+     * First splat index covered by an allocation of the given texture.
+     * @param {Object} textureDesc
+     * @param {Object} allocation
+     * @return {number} may be fractional if the allocation does not start on a splat boundary
+     */
+    static getAllocationSplatOffset(textureDesc, allocation) {
+        return textureDesc.texture.getAllocationStartTexel(allocation) / textureDesc.texelsPerSplat;
+    }
+
+    /**
      * Allocates the given number of splats
      * @param {number} numSplats
      * @return {SplatStagingBuffer | null} the staging buffer for transferring memory to GPU or null if OOM
      */
     allocate(numSplats) {
+        if (!(numSplats > 0)) throw new Error(`GPUSplatAllocator::allocate() -> invalid splat count ${numSplats}`);
+
         const centerColorsTextureDes = this.splatTextureDescriptors['centerColors'];
         const covarancesTextureDesc = this.splatTextureDescriptors['covariances'];
         const scaleRotationsTextureDesc = this.splatTextureDescriptors['scaleRotations'];
         const sphericalHarmonicsDesc = this.splatTextureDescriptors['sphericalHarmonics'];
         const sceneIndexesDesc = this.splatTextureDescriptors['sceneIndexes'];
 
-        const centersColorsAlloc = centerColorsTextureDes.texture.allocatePages(centerColorsTextureDes.texelsPerSplat * numSplats);
+        // Round up so that the allocation is a whole number of pages in every texture (keeps all textures aligned)
+        // TODO: THIS DOES WASTE A LOT OF MEMORY. CALCULATE THE OFFSETS IN SHADERS. 
+        //  ALL WE NEED IS TO KEEP THE PAGES IN THE SAME ORDER BETWEEN TEXTURES
+        const granularity = this.splatAllocationGranularity;
+        const numAllocatedSplats = Math.ceil(numSplats / granularity) * granularity;
+
+        // Collect allocation so that it can be returned to its texture if any of the others fail
+        const allocations = [];
+        const allocateFrom = (desc) => {
+            const alloc = desc.texture.allocatePages(desc.texelsPerSplat * numAllocatedSplats);
+            if (alloc) allocations.push({ desc, alloc });
+            return alloc;
+        };
+        const rollback = () => {
+            for (const { desc, alloc } of allocations) {
+                desc.texture.freePages([alloc]);
+            }
+        };
+
+        const centersColorsAlloc = allocateFrom(centerColorsTextureDes);
 
         let covariancesAlloc = undefined;
         let scaleRotAlloc = undefined;
         if (covarancesTextureDesc) {
-            covariancesAlloc = covarancesTextureDesc.texture.allocatePages(covarancesTextureDesc.texelsPerSplat * numSplats);
+            covariancesAlloc = allocateFrom(covarancesTextureDesc);
         } else if (scaleRotationsTextureDesc) {
-            scaleRotAlloc = scaleRotationsTextureDesc.texture.allocatePages(scaleRotationsTextureDesc.texelsPerSplat * numSplats);
+            scaleRotAlloc = allocateFrom(scaleRotationsTextureDesc);
         }
 
         let shAlloc = undefined;
         if (sphericalHarmonicsDesc) {
-            shAlloc = scaleRotationsTextureDesc.texture.allocatePages(sphericalHarmonicsDesc.texelsPerSplat * numSplats);
+            shAlloc = allocateFrom(sphericalHarmonicsDesc);
         }
 
-        const sceneIndexesAlloc = sceneIndexesDesc.texture.allocatePages(sceneIndexesDesc.texelsPerSplat * numSplats);
+        const sceneIndexesAlloc = allocateFrom(sceneIndexesDesc);
 
-        if (centersColorsAlloc === null || covariancesAlloc === null || scaleRotAlloc === null || shAlloc === null || sceneIndexesAlloc === null)
-        {
+        if (centersColorsAlloc === null || covariancesAlloc === null || scaleRotAlloc === null || shAlloc === null || sceneIndexesAlloc === null) {
             console.error("GPUSplatAllocator ERROR: OOM")
+            rollback();
             return null;
         }
 
-        return new SplatStagingBuffer(this, centersColorsAlloc, covariancesAlloc, scaleRotAlloc, shAlloc, sceneIndexesAlloc);
+        // DEBUG: the shaders address every texture with the same splat index, so all allocations must start at
+        // the same splat index. Rounding to splatAllocationGranularity guarantees this as long as every texture
+        // page is synced (breaks if one texture runs out of pages and falls back to its free list first).
+        // TODO: FIX AND REMOVE THIS
+        const splatOffset = GPUSplatAllocator.getAllocationSplatOffset(centerColorsTextureDes, centersColorsAlloc);
+        for (const { desc, alloc } of allocations) {
+            const offset = GPUSplatAllocator.getAllocationSplatOffset(desc, alloc);
+            if (offset !== splatOffset) {
+                console.error(`GPUSplatAllocator ERROR: misaligned allocation, splat offset ${offset} in one texture vs ${splatOffset} in the centers/colors texture`);
+                rollback();
+                return null;
+            }
+        }
+
+        return new SplatStagingBuffer(this, splatOffset, numSplats, centersColorsAlloc, covariancesAlloc, scaleRotAlloc, shAlloc, sceneIndexesAlloc);
     }
 
     /**
-     * Allocates the given number of splats
+     * Returns the allocations from the given SplatStagingBuffer to their textures.
+     * @param {SplatStagingBuffer} stagingBuffer
+     */
+    free(stagingBuffer) {
+        if (!stagingBuffer || stagingBuffer.freed) return;
+        const freeAlloc = (name, allocation) => {
+            if (allocation) this.splatTextureDescriptors[name].texture.freePages([allocation]);
+        };
+        freeAlloc('centerColors', stagingBuffer.centerColorsAllocation);
+        freeAlloc('covariances', stagingBuffer.covariancesAllocation);
+        freeAlloc('scaleRotations', stagingBuffer.scaleRotationsAllocation);
+        freeAlloc('sphericalHarmonics', stagingBuffer.sphericalHarmonicsAllocation);
+        freeAlloc('sceneIndexes', stagingBuffer.sceneIndexesAllocation);
+        stagingBuffer.freed = true;
+    }
+
+    /**
+     * Uploads an allocation of the given texture to the GPU
      * @param {string} textureName
      * @param {Object} allocation
      */
     submitSplatAllocation(textureName, allocation) {
-        this.splatTextureDescriptors[textureName].submitPages(allocation, this.renderer);
+        this.splatTextureDescriptors[textureName].texture.submitPages(allocation, this.renderer);
     }
 
     // updateDataTexturesFromBaseData(fromSplat, toSplat) {
