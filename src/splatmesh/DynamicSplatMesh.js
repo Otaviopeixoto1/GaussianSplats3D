@@ -125,8 +125,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
     }
 
     /**
-     * @param {function(DynamicSplatMesh)} callback Called after pending nodes were uploaded to the GPU and their splat
-     *                                              centers were pushed to the presort command buffer.
+     * @param {function(DynamicSplatMesh)} callback Called after pending nodes were uploaded to the GPU and their splat centers were pushed to the presort command buffer.
      */
     onNodesLoaded(callback) {
         this.onNodesLoadedCallback = callback;
@@ -291,10 +290,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
     }
 
     /**
-     * Called by three.js right before this mesh is drawn, with the renderer that draws it. All GPU work happens here:
-     * the data textures are created on the first call and the pending nodes are uploaded.
-     * This runs before the material's program and textures are set up for the draw call, so the uploaded data is used
-     * in the same frame.
+     * Called by three.js right before this mesh is drawn, with the renderer that draws it. 
      */
     onBeforeRender(renderer) {
         if (this.pendingNodeLoads.length === 0) return;
@@ -331,7 +327,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
     /**
      * Fetches the packed data of a node, allocates GPU memory for it, writes it into the staging buffer and submits it.
-     * Requires the GPU data textures, so it must run from flushPendingNodeLoads() (see requestSplatNodeLoad()).
+     * Requires the GPU data textures to be setup.
      * @param {number} sceneIndex
      * @param {number} level
      * @param {number} x
@@ -377,7 +373,9 @@ export class DynamicSplatMesh extends THREE.Mesh {
         if (node) {
             node.resident = true;
             node.splatOffset = stagingBuffer.splatOffset;
+
             // The Viewer (gatherSceneNodesForSort) reads the global splat indexes of a node from here
+            // TODO: DONT ALLOCATE A NEW Array EVERY TIME. USE THE ONE WE BOUND TO THE GEOMETRY !!!
             const indexes = new Uint32Array(nodeData.splatCount);
             for (let i = 0; i < nodeData.splatCount; i++) indexes[i] = stagingBuffer.splatOffset + i;
             node.data = { 'indexes': indexes };
@@ -462,7 +460,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
      * Pushes the centers and scene indexes of a loaded node to the sort worker through the presort command buffer.
      * The data is stored in the worker at the global splat indexes [splatOffset, splatOffset + splatCount).
      * 
-     * TODO: The sort worker clamps the render count to (from + count) of the LAST upload it received, so uploads must
+     * TODO: FIX The sort worker clamping the render count to (from + count) of the LAST upload it received, so uploads must
      * currently happen in increasing offset order (true while only root nodes are loaded in build()). FIX THIS
      * ALLOW FOR WHOLE SUBTREES TO BE UPLOADED WITH THE SAME OFFSETS. Each subtree is an independent atomic memory block
      * 
