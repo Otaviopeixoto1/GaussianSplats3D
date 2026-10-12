@@ -36,6 +36,8 @@ class PagedTexture {
         this.elementsPerTexel = elementsPerTexel;
         this.elementsPerPage = this.texelsPerPage * elementsPerTexel;
         this.bytesPerElement = bytesPerElement;
+
+        this._freeAllocs = []
     }
 
     getData() {
@@ -43,22 +45,14 @@ class PagedTexture {
     }
 
     /**
-     * Allocates enough pages to fit the given number of texels
-     * @return {Object | null} The allocation object or null if allocation failed
+     * Returns an allocation object with the given range of pages
+     * @param {number} startPage
+     * @param {number} numPages
+     * @return {Object}
      */
-    allocatePages(numTexels) {
+    makeAlloc(startPage, numPages) {
         const data = this.getData();
-        const numPages = Math.ceil(numTexels / this.texelsPerPage);
-        const dataStart = this.currentPage * this.elementsPerPage;
-
-
-        if (this.currentPage + numPages > this.maxPages) {
-            //
-            // TODO: Try to alloc from free pages OR no alloc
-            //
-            return null;
-        }
-
+        const dataStart = startPage * this.elementsPerPage;
         const updateElementCount = this.elementsPerPage * numPages;
         const updateDataView = new data.constructor(
             data.buffer,
@@ -66,21 +60,56 @@ class PagedTexture {
             updateElementCount
         );
 
-        const allocation = {
-            startPage: this.currentPage,
-            endPage:  this.currentPage + numPages,
+        return {
+            startPage: startPage,
+            endPage: startPage + numPages,
             view: updateDataView
         }
+    }
 
-        //TODO: Keep a reference of freed pages based on allocation. Right now we keep one allocation as atomic (avoid mem fragmentation)
+    /**
+     * Allocates enough pages to fit the given number of texels
+     * @param {number} numTexels
+     * @return {Object | null} The allocation object or null if allocation failed
+     */
+    allocatePages(numTexels) {
+        const numPages = Math.ceil(numTexels / this.texelsPerPage);
 
+        // When full, just reuse from the free allocations:
+        if (this.currentPage + numPages > this.maxPages) {
+            let alloc = null;
+            const removedAllocs = []
+
+            for (let i = 0; i < this._freeAllocs.length; i++) {
+                const freeAlloc = this._freeAllocs[i];
+                const freePageSize = freeAlloc.endPage - freeAlloc.startPage;
+                if (freePageSize >= numPages) {
+                    alloc = this.makeAlloc(freeAlloc.startPage, numPages);
+                    const remaining = freePageSize - numPages;
+                    if (remaining > 0) {
+                        freeAlloc.startPage = freeAlloc.endPage - remaining;
+                    } else {
+                        removedAllocs.push(i);
+                    }
+                }
+            }
+
+            // TODO: Use a better data structure for storing free allocs
+            for (const removedId of removedAllocs) {
+                this._freeAllocs.splice(removedId, 1);
+            }
+
+            return alloc;
+        }
+
+        const allocation = this.makeAlloc(this.currentPage, numPages);
         this.currentPage += numPages;
         return allocation;
     }
 
     freePages(allocations) {
         //TODO: Free the given allocation list
-
+        this._freeAllocs.push(...allocations);
     }
 
     /**
@@ -502,10 +531,8 @@ export class GPUSplatAllocator {
         //     this.material.uniformsNeedUpdate = true;
         // }
 
-        //
-        // TODO: ALLOCATE A SMALLER TEXTURE FOR SCENE INDEXES: HERE IT USES 4096 x 4096 !!!
-        //  use maxSplats to calculate the scene indexes tex size
-        const sceneIndexesTexSize = computeDataTextureSize(Constants.SCENE_INDEXES_ELEMENTS_PER_TEXEL, 4);
+        // TODO:  use maxSplats to calculate the sceneIndexesTexSize
+        const sceneIndexesTexSize = new THREE.Vector2(4096, 1024)
         const paddedTransformIndexes = new Uint32Array(sceneIndexesTexSize.x * sceneIndexesTexSize.y * Constants.SCENE_INDEXES_ELEMENTS_PER_TEXEL);
 
         // TODO: Remove. Move packing logic elsewhere
