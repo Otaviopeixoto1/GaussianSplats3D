@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { UncompressedSplatArray } from './UncompressedSplatArray.js';
 import { clamp, getSphericalHarmonicsComponentCountForDegree } from '../Util.js';
 import { Constants } from '../Constants.js';
+import { SplatDataPacking } from '../LOD/SplatDataPacking.js';
 
 const DefaultSphericalHarmonics8BitCompressionRange = Constants.SphericalHarmonics8BitCompressionRange;
 const DefaultSphericalHarmonics8BitCompressionHalfRange = DefaultSphericalHarmonics8BitCompressionRange / 2.0;
@@ -279,9 +280,9 @@ export class KSplatHeader {
         const compressionLevel = header.compressionLevel;
 
         const maxSectionCount = header.maxSectionCount;
-        const sectionHeaderArrayUint16 = new Uint16Array(buffer, KSplatHeader.HeaderSizeBytes,maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 2);
-        const sectionHeaderArrayUint32 = new Uint32Array(buffer, KSplatHeader.HeaderSizeBytes,maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
-        const sectionHeaderArrayFloat32 = new Float32Array(buffer, KSplatHeader.HeaderSizeBytes,maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
+        const sectionHeaderArrayUint16 = new Uint16Array(buffer, KSplatHeader.HeaderSizeBytes, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 2);
+        const sectionHeaderArrayUint32 = new Uint32Array(buffer, KSplatHeader.HeaderSizeBytes, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
+        const sectionHeaderArrayFloat32 = new Float32Array(buffer, KSplatHeader.HeaderSizeBytes, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
 
         const sectionHeaders = [];
         let sectionHeaderBase = 0;
@@ -420,8 +421,8 @@ export class KSplatHeader {
         for (let i = 0; i < splatCount; i++) {
             const targetSplat = splatArray.splats[i];
             const center = [targetSplat[UncompressedSplatArray.OFFSET.X],
-                targetSplat[UncompressedSplatArray.OFFSET.Y],
-                targetSplat[UncompressedSplatArray.OFFSET.Z]];
+            targetSplat[UncompressedSplatArray.OFFSET.Y],
+            targetSplat[UncompressedSplatArray.OFFSET.Z]];
             if (i === 0 || center[0] < min.x) min.x = center[0];
             if (i === 0 || center[0] > max.x) max.x = center[0];
             if (i === 0 || center[1] < min.y) min.y = center[1];
@@ -441,8 +442,8 @@ export class KSplatHeader {
         for (let i = 0; i < splatCount; i++) {
             const targetSplat = splatArray.splats[i];
             const center = [targetSplat[UncompressedSplatArray.OFFSET.X],
-                            targetSplat[UncompressedSplatArray.OFFSET.Y],
-                            targetSplat[UncompressedSplatArray.OFFSET.Z]];
+            targetSplat[UncompressedSplatArray.OFFSET.Y],
+            targetSplat[UncompressedSplatArray.OFFSET.Z]];
             const xBlock = Math.floor((center[0] - min.x) / blockSize);
             const yBlock = Math.floor((center[1] - min.y) / blockSize);
             const zBlock = Math.floor((center[2] - min.z) / blockSize);
@@ -731,7 +732,7 @@ export class SplatBuffer {
         };
 
         return function(outScaleArray, outRotationArray, transform, srcFrom, srcTo, destFrom,
-                        desiredOutputCompressionLevel, scaleOverride) {
+            desiredOutputCompressionLevel, scaleOverride) {
             const header = this.header;
             const splatCount = header.splatCount;
 
@@ -750,7 +751,7 @@ export class SplatBuffer {
                 const localSplatIndex = i - section.splatCountOffset;
 
                 const srcSplatScalesBase = section.bytesPerSplat * localSplatIndex +
-                    KSplatHeader.CompressionLevels[this.compressionLevel].ScaleOffsetBytes;
+                    KSplatHeader.CompressionLevels[header.compressionLevel].ScaleOffsetBytes;
 
                 const scaleDestBase = (i - srcFrom + destFrom) * KSplatHeader.ScaleComponentCount;
                 const rotationDestBase = (i - srcFrom + destFrom) * KSplatHeader.RotationComponentCount;
@@ -984,7 +985,7 @@ export class SplatBuffer {
         };
 
         return function(outSphericalHarmonicsArray, outSphericalHarmonicsDegree, transform,
-                        srcFrom, srcTo, destFrom, desiredOutputCompressionLevel) {
+            srcFrom, srcTo, destFrom, desiredOutputCompressionLevel) {
             const header = this.header;
             const splatCount = header.splatCount;
 
@@ -1021,7 +1022,7 @@ export class SplatBuffer {
                 const localSplatIndex = i - section.splatCountOffset;
 
                 const srcSplatSHBase = section.bytesPerSplat * localSplatIndex +
-                    KSplatHeader.CompressionLevels[this.compressionLevel].SphericalHarmonicsOffsetBytes;
+                    KSplatHeader.CompressionLevels[header.compressionLevel].SphericalHarmonicsOffsetBytes;
 
                 const dataView = new DataView(this.bufferData, section.dataBase + srcSplatSHBase);
 
@@ -1078,8 +1079,8 @@ export class SplatBuffer {
                             toUncompressedFloatArray3(shIn4, shIn4, header.compressionLevel, minShCoeff, maxShCoeff);
                             toUncompressedFloatArray3(shIn5, shIn5, header.compressionLevel, minShCoeff, maxShCoeff);
                             SplatBuffer.rotateSphericalHarmonics5(shIn1, shIn2, shIn3, shIn4, shIn5,
-                                                                  sh11, sh12, sh13, sh21, sh22, sh23, sh24, sh25,
-                                                                  shOut1, shOut2, shOut3, shOut4, shOut5);
+                                sh11, sh12, sh13, sh21, sh22, sh23, sh24, sh25,
+                                shOut1, shOut2, shOut3, shOut4, shOut5);
                         } else {
                             copy3(shIn1, shOut1);
                             copy3(shIn2, shOut2);
@@ -1137,7 +1138,7 @@ export class SplatBuffer {
     };
 
     static rotateSphericalHarmonics5 = (in1, in2, in3, in4, in5, tsh11, tsh12, tsh13,
-                                        tsh21, tsh22, tsh23, tsh24, tsh25, out1, out2, out3, out4, out5) => {
+        tsh21, tsh22, tsh23, tsh24, tsh25, out1, out2, out3, out4, out5) => {
 
         const kSqrt0104 = Math.sqrt(1.0 / 4.0);
         const kSqrt0304 = Math.sqrt(3.0 / 4.0);
@@ -1160,12 +1161,12 @@ export class SplatBuffer {
         SplatBuffer.dot5(in1, in2, in3, in4, in5, tsh22, out2);
 
         tsh23[0] = kSqrt0103 * (tsh12[2] * tsh12[0] + tsh12[0] * tsh12[2]) + -kSqrt0112 *
-                   ((tsh13[2] * tsh13[0] + tsh13[0] * tsh13[2]) + (tsh11[2] * tsh11[0] + tsh11[0] * tsh11[2]));
+            ((tsh13[2] * tsh13[0] + tsh13[0] * tsh13[2]) + (tsh11[2] * tsh11[0] + tsh11[0] * tsh11[2]));
         tsh23[1] = kSqrt0403 * tsh12[1] * tsh12[0] + -kSqrt0103 * (tsh13[1] * tsh13[0] + tsh11[1] * tsh11[0]);
         tsh23[2] = tsh12[1] * tsh12[1] + -kSqrt0104 * (tsh13[1] * tsh13[1] + tsh11[1] * tsh11[1]);
         tsh23[3] = kSqrt0403 * tsh12[1] * tsh12[2] + -kSqrt0103 * (tsh13[1] * tsh13[2] + tsh11[1] * tsh11[2]);
         tsh23[4] = kSqrt0103 * (tsh12[2] * tsh12[2] - tsh12[0] * tsh12[0]) + -kSqrt0112 *
-                   ((tsh13[2] * tsh13[2] - tsh13[0] * tsh13[0]) + (tsh11[2] * tsh11[2] - tsh11[0] * tsh11[0]));
+            ((tsh13[2] * tsh13[2] - tsh13[0] * tsh13[0]) + (tsh11[2] * tsh11[2] - tsh11[0] * tsh11[0]));
         SplatBuffer.dot5(in1, in2, in3, in4, in5, tsh23, out3);
 
         tsh24[0] = kSqrt0104 * ((tsh12[2] * tsh13[0] + tsh12[0] * tsh13[2]) + (tsh13[2] * tsh12[0] + tsh13[0] * tsh12[2]));
@@ -1387,7 +1388,7 @@ export class SplatBuffer {
                 section.bucketCount * KSplatHeader.BucketStorageSizeFloats);
             if (section.partiallyFilledBucketCount > 0) {
                 section.partiallyFilledBucketLengths = new Uint32Array(this.bufferData, section.base,
-                                                                       section.partiallyFilledBucketCount);
+                    section.partiallyFilledBucketCount);
             }
         }
     }
@@ -1443,9 +1444,9 @@ export class SplatBuffer {
         };
 
         return function(targetSplat, sectionBuffer, bufferOffset, compressionLevel, sphericalHarmonicsDegree,
-                        bucketCenter, compressionScaleFactor, compressionScaleRange,
-                        minSphericalHarmonicsCoeff = -DefaultSphericalHarmonics8BitCompressionHalfRange,
-                        maxSphericalHarmonicsCoeff = DefaultSphericalHarmonics8BitCompressionHalfRange) {
+            bucketCenter, compressionScaleFactor, compressionScaleRange,
+            minSphericalHarmonicsCoeff = -DefaultSphericalHarmonics8BitCompressionHalfRange,
+            maxSphericalHarmonicsCoeff = DefaultSphericalHarmonics8BitCompressionHalfRange) {
 
             const sphericalHarmonicsComponentsPerSplat = getSphericalHarmonicsComponentCountForDegree(sphericalHarmonicsDegree);
             const bytesPerCenter = KSplatHeader.CompressionLevels[compressionLevel].BytesPerCenter;
@@ -1514,7 +1515,7 @@ export class SplatBuffer {
                         for (let s = 0; s < 9; s++) {
                             const srcVal = targetSplat[OFFSET_FRC0 + s] || 0;
                             shOut[s] = compressionLevel === 1 ? toHalfFloat(srcVal) :
-                                       toUint8(srcVal, minSphericalHarmonicsCoeff, maxSphericalHarmonicsCoeff);
+                                toUint8(srcVal, minSphericalHarmonicsCoeff, maxSphericalHarmonicsCoeff);
                         }
                         const degree1ByteCount = 9 * bytesPerSHComponent;
                         copyBetweenBuffers(shOut.buffer, 0, sectionBuffer, sphericalHarmonicsBase, degree1ByteCount);
@@ -1522,10 +1523,10 @@ export class SplatBuffer {
                             for (let s = 0; s < 15; s++) {
                                 const srcVal = targetSplat[OFFSET_FRC9 + s] || 0;
                                 shOut[s + 9] = compressionLevel === 1 ? toHalfFloat(srcVal) :
-                                               toUint8(srcVal, minSphericalHarmonicsCoeff, maxSphericalHarmonicsCoeff);
+                                    toUint8(srcVal, minSphericalHarmonicsCoeff, maxSphericalHarmonicsCoeff);
                             }
                             copyBetweenBuffers(shOut.buffer, degree1ByteCount, sectionBuffer,
-                                               sphericalHarmonicsBase + degree1ByteCount, 15 * bytesPerSHComponent);
+                                sphericalHarmonicsBase + degree1ByteCount, 15 * bytesPerSHComponent);
                         }
                     }
                 }
@@ -1549,7 +1550,7 @@ export class SplatBuffer {
      * Each array is stored in a SplatBuffer *section*
      */
     static generateFromUncompressedSplatArrays(splatArrays, minimumAlpha, compressionLevel,
-                                               sceneCenter, blockSize, bucketSize, options = []) {
+        sceneCenter, blockSize, bucketSize, options = []) {
 
         let shDegree = 0;
         for (let sa = 0; sa < splatArrays.length; sa ++) {
@@ -1611,7 +1612,7 @@ export class SplatBuffer {
             const sectionDataSizeBytes = validSplats.splats.length * bytesPerSplat;
             const bucketMetaDataSizeBytes = partiallyFilledBucketCount * 4;
             const bucketDataBytes = compressionLevel >= 1 ? buckets.length *
-                                                            KSplatHeader.BucketStorageSizeBytes + bucketMetaDataSizeBytes : 0;
+                KSplatHeader.BucketStorageSizeBytes + bucketMetaDataSizeBytes : 0;
             const sectionSizeBytes = sectionDataSizeBytes + bucketDataBytes;
             const sectionBuffer = new ArrayBuffer(sectionSizeBytes);
 
@@ -1627,8 +1628,8 @@ export class SplatBuffer {
                     const targetSplat = validSplats.splats[row];
                     const bufferOffset = bucketDataBytes + outSplatCount * bytesPerSplat;
                     SplatBuffer.writeSplatDataToSectionBuffer(targetSplat, sectionBuffer, bufferOffset, compressionLevel, shDegree,
-                                                              bucketCenter, compressionScaleFactor, compressionScaleRange,
-                                                              minSphericalHarmonicsCoeff, maxSphericalHarmonicsCoeff);
+                        bucketCenter, compressionScaleFactor, compressionScaleRange,
+                        minSphericalHarmonicsCoeff, maxSphericalHarmonicsCoeff);
                     outSplatCount++;
                 }
             }
@@ -1640,7 +1641,7 @@ export class SplatBuffer {
                     bucketMetaDataArray[pfb] = partiallyFullBucketLengths[pfb];
                 }
                 const bucketArray = new Float32Array(sectionBuffer, bucketMetaDataSizeBytes,
-                                                     buckets.length * KSplatHeader.BucketStorageSizeFloats);
+                    buckets.length * KSplatHeader.BucketStorageSizeFloats);
                 for (let b = 0; b < buckets.length; b++) {
                     const bucket = buckets[b];
                     const base = b * 3;
@@ -1741,36 +1742,164 @@ export class SplatBuffer {
 }
 
 
+/**
+ * VirtualSplatBuffer: random-access view over the splat data of a single scene, organized as an octree.
+ * Nodes are addressed with the 3D Tiles implicit tiling convention (https://github.com/CesiumGS/3d-tiles/tree/main/specification/ImplicitTiling)
+ */
 export class VirtualSplatBuffer {
 
-    //
-    // TODO: make a basic implementation which for now will actually load the full buffer. This will just be a simple abstraction
-    //  -This should be aware of the tree structure
-    //  -This should use a simple indexing scheme (3D tiles) to allow random access to both: SplatTreeNode data AND SplatSubTree data...
-    //  -This should receive a simple loader that takes care of converting the indexes to uri/buffer offets for fetching data (but content and subtree data)
-    //
-    constructor(bufferData, secLoadedCountsToMax = true) {
-        //TODO: keep a DynamicSplatLoader object instead of bufferData which will use (depth, x, y, z) to load a data from a specific buffer
+    /**
+     * @param {SplatBuffer | ArrayBuffer} source
+     * @param {boolean} secLoadedCountsToMax
+     */
+    constructor(source, secLoadedCountsToMax = true) {
+        // TODO: keep a DynamicSplatLoader object instead of the full SplatBuffer, which will use (level, x, y, z) to load
+        //  data from a specific byte range.
+        this.splatBuffer = (source instanceof SplatBuffer) ? source : new SplatBuffer(source, secLoadedCountsToMax);
+        this.bufferData = this.splatBuffer.bufferData;
+        this.header = this.splatBuffer.header;
 
-        this.bufferData = bufferData;
-        this.header = KSplatHeader.constructFromBuffer(bufferData, secLoadedCountsToMax);
+        // Packed node data cache: nodeKey -> { formatKey, data }
+        this.nodeDataCache = new Map();
+        this.rootBounds = null;
+    }
+
+    static fromSplatBuffer(splatBuffer) {
+        return new VirtualSplatBuffer(splatBuffer);
+    }
+
+    static getNodeKey(level, x, y, z) {
+        return `${level}/${x}/${y}/${z}`;
+    }
+
+    static isRootNode(level, x, y, z) {
+        return level === 0 && x === 0 && y === 0 && z === 0;
+    }
+
+    static getFormatKey(format, minimumAlpha) {
+        return `${format.splatRenderMode}|${format.covarianceCompressionLevel}|${format.scaleRotationCompressionLevel}|${minimumAlpha}`;
+    }
+
+    getSplatCount() {
+        return this.splatBuffer.getSplatCount();
+    }
+
+    getMaxSplatCount() {
+        return this.splatBuffer.getMaxSplatCount();
+    }
+
+    getMinSphericalHarmonicsDegree() {
+        return this.splatBuffer.getMinSphericalHarmonicsDegree();
+    }
+
+    getSceneCenter() {
+        return this.splatBuffer.getSceneCenter();
     }
 
     /**
-     * Retrieves the splat data for the node mapped into the tuple (depth, x, y, z). Uses the same convesions as 3D tiles with implicit tiling.
-     * For more information on this mapping, check: https://github.com/CesiumGS/3d-tiles/tree/main/specification/ImplicitTiling
-     * @return {Object} object containing the data for a splat node
+     * Returns Range of splats stored in the given node, or null if the node does not exist.
+     * @return {{from: number, to: number, count: number} | null}
      */
-    getSplatNodeData(depth, x, y, z) {
-
+    getNodeSplatRange(level, x, y, z) {
+        if (!VirtualSplatBuffer.isRootNode(level, x, y, z)) return null;
+        const count = this.splatBuffer.getSplatCount();
+        return { from: 0, to: count - 1, count };
     }
 
     /**
-     * Retrieves the splat subtree data for the node mapped into the tuple (depth, x, y, z). Uses the same convesions as 3D tiles with implicit tiling.
-     * For more information on this mapping, check: https://github.com/CesiumGS/3d-tiles/tree/main/specification/ImplicitTiling
-     * @return {Object} object containing the data for a SplatSubtree
+     * Retrieves the splat data for the node mapped into the tuple (level, x, y, z), packed in the GPU texture layout
+     * described by `format`. Uses the same conventions as 3D tiles with implicit tiling.
+     *
+     * The packed data is cached; call releaseSplatNodeData() once it has been uploaded to free the memory.
+     *
+     * @param {number} level
+     * @param {number} x
+     * @param {number} y
+     * @param {number} z
+     * @param {SplatDataFormat} format GPU layout, from GPUSplatAllocator.getSplatDataFormat()
+     * @param {number} [minimumAlpha=1] splats with a lower alpha are made fully transparent
+     * @return {Object | null} null if the node does not exist, otherwise returns the packed node data
      */
-    getSplatSubtreeData(depth, x, y, z) {
+    getSplatNodeData(level, x, y, z, format, minimumAlpha = 1) {
+        if (!format) throw new Error('VirtualSplatBuffer::getSplatNodeData() -> a SplatDataFormat is required');
 
+        const range = this.getNodeSplatRange(level, x, y, z);
+        if (!range || range.count <= 0) return null;
+
+        const key = VirtualSplatBuffer.getNodeKey(level, x, y, z);
+        const formatKey = VirtualSplatBuffer.getFormatKey(format, minimumAlpha);
+        const cached = this.nodeDataCache.get(key);
+        if (cached && cached.formatKey === formatKey && cached.data.splatCount === range.count) return cached.data;
+
+        const packed = SplatDataPacking.packFromSplatBuffer(this.splatBuffer, range.from, range.to, format, minimumAlpha);
+        const data = {
+            key,
+            level, x, y, z,
+            format: { ...format },
+            ...packed
+        };
+        this.nodeDataCache.set(key, { formatKey, data });
+        return data;
+    }
+
+    /**
+     * Drops the cached packed data of a node (e.g. after it has been uploaded to the GPU).
+     */
+    releaseSplatNodeData(level, x, y, z) {
+        this.nodeDataCache.delete(VirtualSplatBuffer.getNodeKey(level, x, y, z));
+    }
+
+    /**
+     * Retrieves the splat subtree data for the node mapped into the tuple (level, x, y, z). Uses the same conventions
+     * as 3D tiles with implicit tiling. For now only the root subtree exists, and it contains only the root node.
+     * @return {Object | null} null if the subtree does not exist, otherwise returns the splat Subtree data
+     */
+    getSplatSubtreeData(level, x, y, z) {
+        if (!VirtualSplatBuffer.isRootNode(level, x, y, z)) return null;
+
+        const range = this.getNodeSplatRange(0, 0, 0, 0);
+        const bounds = this.computeRootBounds();
+        return {
+            level, x, y, z,
+            min: bounds.min.clone(),
+            max: bounds.max.clone(),
+            nodes: [{
+                level: 0, x: 0, y: 0, z: 0,
+                splatCount: range ? range.count : 0,
+                min: bounds.min.clone(),
+                max: bounds.max.clone(),
+                children: []
+            }],
+            childSubtrees: []
+        };
+    }
+
+    /**
+     * Bounding box of all splat centers in the buffer (untransformed). Cached until the splat count changes.
+     */
+    computeRootBounds() {
+        const splatCount = this.splatBuffer.getSplatCount();
+        if (this.rootBounds && this.rootBounds.splatCount === splatCount) return this.rootBounds;
+
+        const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+        const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+        if (splatCount > 0) {
+            const centers = new Float32Array(splatCount * 3);
+            this.splatBuffer.fillSplatCenterArray(centers, undefined, 0, splatCount - 1, 0);
+            for (let i = 0; i < splatCount * 3; i += 3) {
+                const cx = centers[i], cy = centers[i + 1], cz = centers[i + 2];
+                if (cx < min.x) min.x = cx;
+                if (cy < min.y) min.y = cy;
+                if (cz < min.z) min.z = cz;
+                if (cx > max.x) max.x = cx;
+                if (cy > max.y) max.y = cy;
+                if (cz > max.z) max.z = cz;
+            }
+        } else {
+            min.set(0, 0, 0);
+            max.set(0, 0, 0);
+        }
+        this.rootBounds = { min, max, splatCount };
+        return this.rootBounds;
     }
 }
