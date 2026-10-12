@@ -207,7 +207,7 @@ export class SplatMesh extends THREE.Mesh {
      *                                            builder worker starts and finishes.
      * @param {function} onSplatTreeConstruction Function to be called when the conversion of the local splat tree from
      *                                           the format produced by the splat tree builder worker starts and ends.
-     * @return {SplatTree}
+     * @return {Promise}
      */
      buildSplatTree = function(minAlphas = [], onSplatTreeIndexesUpload, onSplatTreeConstruction) {
         return new Promise((resolve) => {

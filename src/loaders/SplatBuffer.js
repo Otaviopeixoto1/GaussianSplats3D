@@ -190,7 +190,24 @@ export class KSplatHeader {
         this.sections = sectionHeaders;
     }
 
-    //TODO: Also add accessors to the offsets into the file headers so that we dont need the whole buffer
+    /**
+     * Accessors
+     */
+    getMinSphericalHarmonicsDegree() {
+        let minSphericalHarmonicsDegree = 0;
+        for (let i = 0; i < this.sections.length; i++) {
+            const section = this.sections[i];
+            if (i === 0 || section.sphericalHarmonicsDegree < minSphericalHarmonicsDegree) {
+                minSphericalHarmonicsDegree = section.sphericalHarmonicsDegree;
+            }
+        }
+        return minSphericalHarmonicsDegree;
+    }
+
+
+    /**
+     * Setup and Parser methods
+     */
     static constructFromBuffer(bufferData, secLoadedCountsToMax) {
         const headerData = KSplatHeader.parseHeaderData(bufferData);
         headerData.sectionCount = secLoadedCountsToMax ? headerData.maxSectionCount : 0;
@@ -486,6 +503,10 @@ export class SplatBuffer {
         return this.header.sceneCenter;
     }
 
+    getMinSphericalHarmonicsDegree() {
+        return this.header.getMinSphericalHarmonicsDegree();
+    }
+
     getSplatCount() {
         return this.header.splatCount;
     }
@@ -496,17 +517,6 @@ export class SplatBuffer {
 
     getSplatSection(globalSplatIndex) {
         return this.globalSplatIndexToSectionMap[globalSplatIndex];
-    }
-
-    getMinSphericalHarmonicsDegree() {
-        let minSphericalHarmonicsDegree = 0;
-        for (let i = 0; i < this.header.sections.length; i++) {
-            const section = this.header.sections[i];
-            if (i === 0 || section.sphericalHarmonicsDegree < minSphericalHarmonicsDegree) {
-                minSphericalHarmonicsDegree = section.sphericalHarmonicsDegree;
-            }
-        }
-        return minSphericalHarmonicsDegree;
     }
 
     getBucketIndex(section, localSplatIndex) {
@@ -795,6 +805,7 @@ export class SplatBuffer {
         };
     }();
 
+    //TODO: Move into som static helper function set
     static computeCovariance = function() {
 
         const tempMatrix4 = new THREE.Matrix4();
@@ -1726,5 +1737,40 @@ export class SplatBuffer {
             splatBuffer: new SplatBuffer(outBuffer, true),
             splatBufferDataOffsetBytes
         };
+    }
+}
+
+
+export class VirtualSplatBuffer {
+
+    //
+    // TODO: make a basic implementation which for now will actually load the full buffer. This will just be a simple abstraction
+    //  -This should be aware of the tree structure
+    //  -This should use a simple indexing scheme (3D tiles) to allow random access to both: SplatTreeNode data AND SplatSubTree data...
+    //  -This should receive a simple loader that takes care of converting the indexes to uri/buffer offets for fetching data (but content and subtree data)
+    //
+    constructor(bufferData, secLoadedCountsToMax = true) {
+        //TODO: keep a DynamicSplatLoader object instead of bufferData which will use (depth, x, y, z) to load a data from a specific buffer
+
+        this.bufferData = bufferData;
+        this.header = KSplatHeader.constructFromBuffer(bufferData, secLoadedCountsToMax);
+    }
+
+    /**
+     * Retrieves the splat data for the node mapped into the tuple (depth, x, y, z). Uses the same convesions as 3D tiles with implicit tiling.
+     * For more information on this mapping, check: https://github.com/CesiumGS/3d-tiles/tree/main/specification/ImplicitTiling
+     * @return {Object} object containing the data for a splat node
+     */
+    getSplatNodeData(depth, x, y, z) {
+
+    }
+
+    /**
+     * Retrieves the splat subtree data for the node mapped into the tuple (depth, x, y, z). Uses the same convesions as 3D tiles with implicit tiling.
+     * For more information on this mapping, check: https://github.com/CesiumGS/3d-tiles/tree/main/specification/ImplicitTiling
+     * @return {Object} object containing the data for a SplatSubtree
+     */
+    getSplatSubtreeData(depth, x, y, z) {
+
     }
 }

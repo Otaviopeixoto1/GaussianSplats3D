@@ -28,11 +28,15 @@ export class SplatSubTree {
     constructor(maxDepth, maxCentersPerNode) {
         this.maxDepth = maxDepth;
         this.maxCentersPerNode = maxCentersPerNode;
-        this.sceneDimensions = new THREE.Vector3();
         this.sceneMin = new THREE.Vector3();
         this.sceneMax = new THREE.Vector3();
         this.rootNode = null;
         this.splatMesh = null;
+
+        //
+        //TODO: Support a subtree having child subtrees
+        //
+        this.childSubtreeAvailability = []
     }
 
     static convertWorkerSubTreeNode(workerSubTreeNode) {
@@ -544,6 +548,10 @@ export class SplatTree {
     constructor(maxDepth, maxCentersPerNode) {
         this.maxDepth = maxDepth;
         this.maxCentersPerNode = maxCentersPerNode;
+
+        /**
+         * The root subtrees inside this tree
+         */
         this.subTrees = [];
         this.splatMesh = null;
     }
@@ -632,7 +640,6 @@ export class SplatTree {
                             const offset = KSplatHeader.calculateTotalSplatBufferSize(scene.splatBuffer);
                             const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(scene.splatBuffer.bufferData, offset);
                             const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
-                            subtree.sceneDimensions = new THREE.Vector3();
                             subtree.sceneMin = subTreeRoot.min;
                             subtree.sceneMax = subTreeRoot.max;
                             subtree.rootNode = subTreeRoot;
