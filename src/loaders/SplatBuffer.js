@@ -1798,12 +1798,17 @@ export class VirtualSplatBuffer {
 
     /**
      * Returns Range of splats stored in the given node, or null if the node does not exist.
+     *    TODO: JUST USE SOME DYNAMIC LOADER THAT CONVERTS XYZ INTO RANGE INTERNALLY. IMPLEMENT ON THE KsplatTreeLoader
      * @return {{from: number, to: number, count: number} | null}
      */
     getNodeSplatRange(level, x, y, z) {
+        // TODO: EXTEND TO LOAD ANY NODE
         if (!VirtualSplatBuffer.isRootNode(level, x, y, z)) return null;
+        //
+        // TODO: Map the node id to the actual range
+        //
         const count = this.splatBuffer.getSplatCount();
-        return { from: 0, to: count - 1, count };
+        return { from: 0, to: count / 2 - 1, count: count / 2 };
     }
 
     /**
@@ -1821,8 +1826,7 @@ export class VirtualSplatBuffer {
      * @return {Object | null} null if the node does not exist, otherwise returns the packed node data
      */
     getSplatNodeData(level, x, y, z, format, minimumAlpha = 1) {
-        if (!format) throw new Error('VirtualSplatBuffer::getSplatNodeData() -> a SplatDataFormat is required');
-
+        // TODO: JUST USE SOME DYNAMIC LOADER THAT CONVERTS XYZ INTO RANGE INTERNALLY
         const range = this.getNodeSplatRange(level, x, y, z);
         if (!range || range.count <= 0) return null;
 
@@ -1856,6 +1860,8 @@ export class VirtualSplatBuffer {
      */
     getSplatSubtreeData(level, x, y, z) {
         if (!VirtualSplatBuffer.isRootNode(level, x, y, z)) return null;
+
+        //TODO: EXTEND TO LOAD A FULL SUBTREE. CHANGE THE SUBTREE FORMAT
 
         const range = this.getNodeSplatRange(0, 0, 0, 0);
         const bounds = this.computeRootBounds();

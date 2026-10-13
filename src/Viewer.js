@@ -1367,6 +1367,7 @@ export class Viewer {
      * @return {object}
      */
     addSplatBuffersToDynamicMesh(splatBuffers, splatBufferOptions) {
+        // TODO: Dont even load the splatBuffers. This is just for testing
         const virtualSplatBuffers = splatBuffers.map((splatBuffer) => {
             return (splatBuffer instanceof VirtualSplatBuffer) ? splatBuffer : VirtualSplatBuffer.fromSplatBuffer(splatBuffer);
         });
@@ -2180,23 +2181,7 @@ export class Viewer {
                     this.sortPromiseResolver = resolve;
                 });
 
-
-
-                // if (this.preSortMessages.length > 0) {
-                //     this.preSortMessages.forEach((message) => {
-                //         this.sortWorker.postMessage(message);
-                //     });
-                //     this.preSortMessages = [];
-                // }
-
-                // this.sortWorker.postMessage({
-                //     'sort': sortMessage
-                // });
-
-                // TODO: FIX SORTS NOT HAPPENING !!!!! sortRunning must be true
-                // console.log(sortMessage)
                 this.sortCommandBuffer.pushCommand({'sort': sortMessage}, (e) => {
-                    // console.log("SORT RESPONSE", e)
                     if (e.sortDone) {
                         this.sortRunning = false;
                         if (this.sharedMemoryForWorkers) {
@@ -2226,7 +2211,6 @@ export class Viewer {
                     return false;
                 })
 
-                // console.log("queues", this.sortCommandQueue.subQueues)
                 this.sortCommandQueue.flushCommands();
 
                 if (queuedSorts.length === 0) {
@@ -2257,9 +2241,6 @@ export class Viewer {
                 baseModelView.copy(this.camera.matrixWorld).invert();
                 if (!this.splatMesh.dynamicMode) baseModelView.multiply(this.splatMesh.matrixWorld);
 
-                //
-                // TODO: Move this cull logic function
-                //
                 performance.mark("gather-visible-started");
                 const res = this.gatherVisibleNodes(splatTree.subTrees, baseModelView, this.camera.projectionMatrix, gatherAllNodes, false);
                 const nodeRenderList = res.nodes;
@@ -2269,7 +2250,7 @@ export class Viewer {
 
 
                 //
-                // TODO: Test Removing this... we could also do some kind of hierarchycal sort
+                // TODO: Test Removing this... we could also do some kind of hierarchical sort
                 //
                 // performance.mark("sort-visible-nodes-started")
                 // nodeRenderList.sort((a, b) => {
