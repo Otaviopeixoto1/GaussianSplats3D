@@ -1,4 +1,3 @@
-
 /**
  * A command buffer meant to be used to organize all commands going into a command buffer
  */
@@ -15,11 +14,12 @@ export class WorkerCommandBuffer {
     /**
      * @param { any } command the command to run inside the worker
      * @param { (any) => boolean } [onResponse] the callback used when the WebWorker responds. Must return true when the command was resolved, false otherwise
+     * @param { Array<Transferable> } [transfer] objects whose ownership is transferred to the worker
      * @return {WorkerCommand}
      */
-    pushCommand(command, onResponse) {
+    pushCommand(command, onResponse, transfer) {
         //Also make an id for the command
-        let cmd = new WorkerCommand(command, onResponse);
+        let cmd = new WorkerCommand(command, onResponse, transfer);
         this._queue.pushCommand(cmd, this.priority);
     }
 }
@@ -31,8 +31,9 @@ export class WorkerCommand {
     /**
      * @param { any } command the command object to run inside the worker
      * @param { (any) => boolean } [onResponse] the callback used when the WebWorker responds. Must return true when the command was resolved, false otherwise
+     * @param { Array<Transferable> } [transfer] objects whose ownership is transferred to the worker
      */
-    constructor(command, onResponse) {
+    constructor(command, onResponse, transfer) {
         /**
          * The next element in the command list
          * @member { WorkerCommand | null } next
@@ -46,6 +47,7 @@ export class WorkerCommand {
         this.prev = null;
         this.command = command;
         this.onResponse = onResponse;
+        this.transfer = transfer;
     }
 
 }
@@ -72,7 +74,7 @@ class WorkerCommandSubQueue {
     getHead() {
         return this.commandsHead;
     }
-    
+
     /**
      * @param { WorkerCommand } command the command object to run inside the worker
      */
@@ -220,7 +222,7 @@ export class WorkerCommandQueue {
                     this.responsesQueue.pushCommand(currentCommand);
                 }
                 // console.log("PUSH TO WORKER", currentCommand.command);
-                this._worker.postMessage(currentCommand.command);
+                this._worker.postMessage(currentCommand.command, currentCommand.transfer || []);
                 currentCommand = subQueue.popCommand();
             }
         }
