@@ -266,6 +266,8 @@ export class GPUSplatAllocator {
         this.webGLUtils = null;
         this.material = null;
 
+        this.splatCapacity = 0;
+
         this.splatRenderMode = splatRenderMode;
         this.halfPrecisionCovariancesOnGPU = halfPrecisionCovariancesOnGPU;
         this.shCompressionLevel = shCompressionLevel;
@@ -299,7 +301,7 @@ export class GPUSplatAllocator {
      * Allocates the initial splat textures and binds to the given renderer
      * @param {THREE.WebGLRenderer} renderer
      * @param {SplatMaterial3D | SplatMaterial2D} splatMaterial
-     * @param {number} maxSplats
+     * @param {number} maxSplats Every allocated splat index stays below this value (see splatCapacity)
      */
     setup(renderer, splatMaterial, maxSplats) {
         //
@@ -625,12 +627,30 @@ export class GPUSplatAllocator {
             'bytesPerElement': sceneIndexesBytesPerElement,
         };
 
-        //TODO: Update Scene count dynamically instead of only here:
         this.setSceneCount(0);
 
         this.splatAllocationGranularity = this.computeSplatAllocationGranularity();
         if (this.logLevel >= LogLevel.Info) {
             console.log(`GPUSplatAllocator: allocation granularity ${this.splatAllocationGranularity} splats`);
+        }
+
+        // Limit the splat index space to maxSplats (rounded down to whole allocations), so that every splat index fits in
+        // fixed size buffers sized with maxSplats (e.g. the sort worker). Every texture is limited to the same number of splats.
+        const granularity = this.splatAllocationGranularity;
+        let splatCapacity = Math.floor(maxSplats / granularity) * granularity;
+        for (const name in this.splatTextureDescriptors) {
+            const desc = this.splatTextureDescriptors[name];
+            const textureSplatCapacity = desc.texture.maxPages * desc.texture.texelsPerPage / desc.texelsPerSplat;
+            splatCapacity = Math.min(splatCapacity, Math.floor(textureSplatCapacity / granularity) * granularity);
+        }
+        for (const name in this.splatTextureDescriptors) {
+            const desc = this.splatTextureDescriptors[name];
+            desc.texture.maxPages = splatCapacity * desc.texelsPerSplat / desc.texture.texelsPerPage;
+        }
+
+        this.splatCapacity = splatCapacity;
+        if (splatCapacity === 0) {
+            console.error(`GPUSplatAllocator: maxSplats (${maxSplats}) is smaller than the allocation granularity (${granularity})`);
         }
     }
 

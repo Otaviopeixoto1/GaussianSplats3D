@@ -125,6 +125,9 @@ export class Viewer {
             console.warn('Viewer: "gpuAcceleratedSort" is not supported with "enableDynamicSplatMesh" yet, it will be disabled.');
             this.gpuAcceleratedSort = false;
         }
+        // Fixed size of the DynamicSplatMesh splat index space. GPU allocations stay below it and the sort worker is created
+        // once with this capacity (never resized). The sort worker uses about 36 bytes per splat of this capacity.
+        this.maxResidentSplats = options.maxResidentSplats || 4194304;
 
         // When true, will perform additional steps during rendering to address artifacts caused by the rendering of gaussians at a
         // substantially different resolution than that at which they were rendered during training. This will only work correctly
@@ -319,7 +322,7 @@ export class Viewer {
             this.splatMesh = new DynamicSplatMesh(this.halfPrecisionCovariancesOnGPU, this.devicePixelRatio,
                 this.gpuAcceleratedSort, this.integerBasedSort, this.antialiased,
                 this.maxScreenSpaceSplatSize, this.logLevel, this.sphericalHarmonicsDegree,
-                this.sceneFadeInRateMultiplier, this.kernel2DSize);
+                this.sceneFadeInRateMultiplier, this.kernel2DSize, this.maxResidentSplats);
             // The DynamicSplatMesh uploads its nodes when it is first drawn, the sort worker is set up after that
             this.splatMesh.onNodesLoaded(() => this.onDynamicSplatMeshNodesLoaded());
         } else {
@@ -1390,30 +1393,14 @@ export class Viewer {
     }
 
     /**
-     * Called by the DynamicSplatMesh after it uploaded nodes (during rendering). The splat index range in use may have
-     * grown, so the sort worker is (re)created if needed, then a full sort is started. The centers of the new nodes are
-     * already queued in the presort command buffer and reach the worker before the sort command.
-     *
-     * TODO: Improve this. Try to mirror SplatMesh
+     * Called by the DynamicSplatMesh after it uploaded nodes (during rendering). The centers of the new nodes are already
+     * queued in the presort command buffer and we can assume they reach the worker before the sort command.
      */
     onDynamicSplatMeshNodesLoaded() {
-        if (this.isDisposingOrDisposed()) return;
-        const maxSplatCount = this.splatMesh.getMaxSplatCount();
-        if (this.sortWorker && this.sortWorker.maxSplatCount !== maxSplatCount) this.disposeSortWorker();
-        if (!this.sortWorker && maxSplatCount > 0) {
-            // update() must not run a sort until the new sort worker is set up
-            this.splatRenderReady = false;
-            this.setupSortWorker(this.splatMesh).then(() => {
-                if (this.isDisposingOrDisposed()) return;
-                this.splatRenderReady = true;
-                // Does nothing until the viewer is initialized (drop-in mode), the regular update() sorts in that case
-                this.runSplatSort(true, true);
-                this.forceRenderNextFrame();
-            });
-        } else {
-            this.runSplatSort(true, true);
-            this.forceRenderNextFrame();
-        }
+        if (this.isDisposingOrDisposed() || !this.splatRenderReady || !this.sortWorker) return;
+        // Does nothing until the viewer is initialized (drop-in mode), the regular update() sorts in that case
+        this.runSplatSort(true, true);
+        this.forceRenderNextFrame();
     }
 
     /**

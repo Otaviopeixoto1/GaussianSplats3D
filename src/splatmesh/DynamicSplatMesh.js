@@ -21,7 +21,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
     //TODO: Compact this into some kind of EngineSettings interface...
     constructor(halfPrecisionCovariancesOnGPU = false, devicePixelRatio = 1, enableDistancesComputationOnGPU = true,
         integerBasedDistancesComputation = false, antialiased = false, maxScreenSpaceSplatSize = 1024, logLevel = LogLevel.None,
-        sphericalHarmonicsDegree = 0, sceneFadeInRateMultiplier = 1.0, kernel2DSize = 0.3) {
+        sphericalHarmonicsDegree = 0, sceneFadeInRateMultiplier = 1.0, kernel2DSize = 0.3, maxResidentSplats = 4194304) {
         super(Constants.dummyGeometry, Constants.dummyMaterial);
 
         // Reference to a Three.js renderer
@@ -54,7 +54,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.enableDistancesComputationOnGPU = enableDistancesComputationOnGPU;
 
         // Use a faster integer-based approach for calculating splat distances from the camera.
-        // Must match the sort worker setup ('integerBasedSort' in the Viewer), it decides the format of the centers sent to it.
+        // Not used by this mesh: the sort worker converts the node centers it receives to its own format.
         this.integerBasedDistancesComputation = integerBasedDistancesComputation;
 
         // See SplatMesh
@@ -102,8 +102,9 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.pendingNodeLoads = [];
         // True once GPUSplatAllocator.setup() has run with the renderer given to onBeforeRender()
         this.splatAllocatorReady = false;
-        // Size of the data passed to GPUSplatAllocator.setup()
-        this.maxSplatCount = 0;
+        // Fixed size of the splat index space: every allocated splat index is below this value. The sort worker is
+        // created once with this capacity (see getMaxSplatCount()), so it never has to be resized.
+        this.maxResidentSplats = maxResidentSplats;
         // Called after pending nodes were uploaded, see onNodesLoaded()
         this.onNodesLoadedCallback = null;
         // Called after pending nodes were uploaded, see onNodesLoaded()
@@ -191,11 +192,9 @@ export class DynamicSplatMesh extends THREE.Mesh {
         // The data textures are (re)created on the next onBeforeRender(), when a renderer is available
         this.splatAllocator.disposeTextures();
         this.splatAllocatorReady = false;
-        this.maxSplatCount = maxSplatCount;
 
         this.baseSplatTree = new SplatTree(12, 1000);
 
-        // TODO: Push a subtree if its node is loaded
         for (let i = 0; i < virtualSplatBuffers.length; i++) {
             this.pushSplatScene(virtualSplatBuffers[i], sceneOptions[i]);
         }
@@ -323,7 +322,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
         if (!this.splatAllocatorReady) {
             const setupStart = performance.now();
-            this.splatAllocator.setup(this.renderer, this.material, this.maxSplatCount);
+            this.splatAllocator.setup(this.renderer, this.material, this.maxResidentSplats);
             this.splatAllocator.setSceneCount(this.scenes.length);
             this.splatAllocatorReady = true;
             if (this.logLevel >= LogLevel.Info) {
@@ -379,8 +378,10 @@ export class DynamicSplatMesh extends THREE.Mesh {
         stagingBuffer.writeNodeData(nodeData, sceneIndex);
         stagingBuffer.submit();
 
-        // Send the splat positions of this node to the sort worker, stored at the node's global splat indexes
-        this.submitNodeDataForDistancesComputation(stagingBuffer.splatOffset, nodeData, sceneIndex);
+        // Send the splat centers of this node to the sort worker, stored at the node global splat indexes.
+        // If releaseNodeData is true (default) This centers buffer is transferred (not copied) to the worker
+        const centers = releaseNodeData ? nodeData.centers : nodeData.centers.slice();
+        this.submitNodeDataForDistancesComputation(stagingBuffer.splatOffset, nodeData.splatCount, centers, sceneIndex);
 
         if (releaseNodeData) virtualSplatBuffer.releaseSplatNodeData(level, x, y, z);
 
@@ -440,70 +441,33 @@ export class DynamicSplatMesh extends THREE.Mesh {
      */
 
     /**
-     * Get copies of data that are necessary for splat distance computation: splat center positions (untransformed,
-     * padded to 4 components) and splat scene indexes. Same format as SplatMesh.getDataForDistancesComputation().
-     * @param {Object} nodeData packed node data from VirtualSplatBuffer.getSplatNodeData()
-     * @param {number} sceneIndex
-     * @return {{centers: (Int32Array|Float32Array), sceneIndexes: Uint32Array}}
-     */
-    getDataForDistancesComputation(nodeData, sceneIndex) {
-        const splatCount = nodeData.splatCount;
-        const srcCenters = nodeData.centers;
-        let centers;
-        if (this.integerBasedDistancesComputation) {
-            centers = new Int32Array(splatCount * 4);
-            for (let i = 0; i < splatCount; i++) {
-                for (let t = 0; t < 3; t++) {
-                    centers[i * 4 + t] = Math.round(srcCenters[i * 3 + t] * 1000.0);
-                }
-                centers[i * 4 + 3] = 1000;
-            }
-        } else {
-            centers = new Float32Array(splatCount * 4);
-            for (let i = 0; i < splatCount; i++) {
-                for (let t = 0; t < 3; t++) {
-                    centers[i * 4 + t] = srcCenters[i * 3 + t];
-                }
-                centers[i * 4 + 3] = 1.0;
-            }
-        }
-        const sceneIndexes = new Uint32Array(splatCount).fill(sceneIndex);
-        return {
-            centers,
-            sceneIndexes
-        };
-    }
-
-    /**
-     * Pushes the centers and scene indexes of a loaded node to the sort worker through the presort command buffer.
-     * The data is stored in the worker at the global splat indexes [splatOffset, splatOffset + splatCount).
-     * 
-     * TODO: FIX The sort worker clamping the render count to (from + count) of the LAST upload it received, so uploads must
-     * currently happen in increasing offset order (true while only root nodes are loaded in build()). FIX THIS
-     * ALLOW FOR WHOLE SUBTREES TO BE UPLOADED WITH THE SAME OFFSETS. Each subtree is an independent atomic memory block
-     * 
+     * Pushes the centers and scene index of a loaded node to the sort worker through the presort command buffer.
+     * The data is stored in the worker at the global splat indexes [splatOffset, splatOffset + splatCount). The worker
+     * converts the centers to its own format and fills the scene indexes, nodes can be uploaded in any order.
+     *
+     * TODO: ALLOW FOR WHOLE SUBTREES TO BE UPLOADED WITH THE SAME OFFSETS. Each subtree is an independent atomic memory block
+     *
      * @param {number} splatOffset global splat index of the first splat of the node
-     * @param {Object} nodeData packed node data
+     * @param {number} splatCount
+     * @param {Float32Array} centers 3 floats per splat, its buffer is transferred to the worker (unusable afterwards)
      * @param {number} sceneIndex
      */
-    submitNodeDataForDistancesComputation(splatOffset, nodeData, sceneIndex) {
+    submitNodeDataForDistancesComputation(splatOffset, splatCount, centers, sceneIndex) {
         if (!this.presortCommandBuffer) {
             if (this.logLevel >= LogLevel.Info) {
                 console.warn('DynamicSplatMesh: no presort command buffer, the sort worker will not receive the splat centers');
             }
             return;
         }
-        const { centers, sceneIndexes } = this.getDataForDistancesComputation(nodeData, sceneIndex);
         const updateMessage = {
-            'centers': centers.buffer,
-            'sceneIndexes': sceneIndexes.buffer,
-            'range': {
+            'nodeCenters': {
                 'from': splatOffset,
-                'to': splatOffset + nodeData.splatCount - 1,
-                'count': nodeData.splatCount
+                'count': splatCount,
+                'sceneIndex': sceneIndex,
+                'centers': centers.buffer
             }
         }
-        this.presortCommandBuffer.pushCommand(updateMessage);
+        this.presortCommandBuffer.pushCommand(updateMessage, undefined, [centers.buffer]);
     }
 
     /**
@@ -518,8 +482,8 @@ export class DynamicSplatMesh extends THREE.Mesh {
      * @param {number} renderSplatCount Number of valid entries in globalIndexes
      */
     updateRenderIndexes(globalIndexes, renderSplatCount) {
-        const geometry = this.geometry;
-        const splatIndexAttribute = geometry.attributes.splatIndex;
+        if (!this.geometry || this.geometry === Constants.dummyGeometry) return;
+        const splatIndexAttribute = this.geometry.attributes.splatIndex;
         const count = Math.min(renderSplatCount, splatIndexAttribute.array.length);
 
         // The sorted indexes array of the sort worker can be larger than our index buffer
@@ -527,8 +491,8 @@ export class DynamicSplatMesh extends THREE.Mesh {
         splatIndexAttribute.needsUpdate = true;
 
         //TODO: only upload the used range: splatIndexAttribute.addUpdateRange(0, count) (three r159+)
-        geometry.instanceCount = count;
-        geometry.setDrawRange(0, count);
+        this.geometry.instanceCount = count;
+        this.geometry.setDrawRange(0, count);
         this.renderSplatCount = count;
         if (count > 0 && this.firstRenderTime === -1) this.firstRenderTime = performance.now();
     }
@@ -634,16 +598,12 @@ export class DynamicSplatMesh extends THREE.Mesh {
     }
 
     /**
-     * Highest global splat index in use + 1. The sort worker stores centers at the global splat indexes, so it has to
-     * be allocated with (at least) this many splats.
+     * Size of the splat index space (fixed). The sort worker stores centers at the global splat indexes, so it is
+     * allocated with this many splats. GPUSplatAllocator never hands out a splat index at or above this value.
      * @return {number}
      */
     getMaxSplatCount() {
-        let maxSplatCount = 0;
-        for (const record of this.residentNodes.values()) {
-            maxSplatCount = Math.max(maxSplatCount, record.splatOffset + record.splatCount);
-        }
-        return maxSplatCount;
+        return this.maxResidentSplats;
     }
 
     getSplatTree() {

@@ -148,7 +148,7 @@ export class SplatDataPacking {
 
         return {
             splatCount,
-            centers,
+            centers, //TODO: Dont use the separated centers array ? maybe just send centerColors to the worker ?
             centerColors,
             covariances,
             scaleRotations
