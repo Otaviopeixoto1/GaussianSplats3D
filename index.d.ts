@@ -72,6 +72,7 @@ export interface ViewerOptions {
     splatSortDistanceMapPrecision: number;
     halfPrecisionCovariancesOnGPU: boolean;
     dynamicScene: boolean;
+    enableDynamicSplatMesh: boolean;
     webXRMode: WebXRMode;
     webXRSessionInit: any;
     renderMode: RenderMode;

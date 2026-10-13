@@ -78,6 +78,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
         // Special octree tailored to SplatMesh instances
         //TODO: store octree on the scene itself...
         this.baseSplatTree = null;
+        this.splatTree = null;
 
         // Resident nodes: "sceneIndex:level/x/y/z" -> { sceneIndex, level, x, y, z, node, stagingBuffer, splatOffset, splatCount }
         this.residentNodes = new Map();
@@ -105,6 +106,8 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.maxSplatCount = 0;
         // Called after pending nodes were uploaded, see onNodesLoaded()
         this.onNodesLoadedCallback = null;
+        // Called after pending nodes were uploaded, see onNodesLoaded()
+        this.onSplatTreeReadyCallback = null;
 
         this.disposed = false;
         this.visible = false;
@@ -129,6 +132,13 @@ export class DynamicSplatMesh extends THREE.Mesh {
      */
     onNodesLoaded(callback) {
         this.onNodesLoadedCallback = callback;
+    }
+
+    /**
+     * @param {function(DynamicSplatMesh)} callback Called after the SplatTree is built
+     */
+    onSplatTreeReady(callback) {
+        this.onSplatTreeReadyCallback = callback;
     }
 
     /**
@@ -185,9 +195,12 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
         this.baseSplatTree = new SplatTree(12, 1000);
 
+        // TODO: Push a subtree if its node is loaded
         for (let i = 0; i < virtualSplatBuffers.length; i++) {
             this.pushSplatScene(virtualSplatBuffers[i], sceneOptions[i]);
         }
+
+        this.splatTree = this.baseSplatTree;
 
         // Request the root node of every scene. The nodes are uploaded on the next onBeforeRender().
         // Every loaded node also pushes its centers + scene indexes into the presort command buffer (see loadSplatNode()),
@@ -207,6 +220,9 @@ export class DynamicSplatMesh extends THREE.Mesh {
         if (this.logLevel >= LogLevel.Info) {
             console.log(`Dynamic Splat Mesh build: ${(performance.now() - buildStart).toFixed(1)} ms, ${this.pendingNodeLoads.length} pending nodes`);
         }
+
+        if (this.onSplatTreeReadyCallback) this.onSplatTreeReadyCallback(this.splatTree);
+        this.onSplatTreeReadyCallback = null;
     }
 
     /**
@@ -349,8 +365,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
         const virtualSplatBuffer = scene.virtualSplatBuffer;
 
         const loadStart = performance.now();
-        const nodeData = virtualSplatBuffer.getSplatNodeData(level, x, y, z, this.splatAllocator.getSplatDataFormat(),
-            scene.minimumAlpha);
+        const nodeData = virtualSplatBuffer.getSplatNodeData(level, x, y, z, this.splatAllocator.getSplatDataFormat(), scene.minimumAlpha);
 
         if (!nodeData) return null;
 
@@ -369,6 +384,9 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
         if (releaseNodeData) virtualSplatBuffer.releaseSplatNodeData(level, x, y, z);
 
+        //
+        // TODO: Setup for loadin any node, not just the root !
+        //
         const node = (level === 0 && scene.subtree.rootNode) ? scene.subtree.rootNode : null;
         if (node) {
             node.resident = true;
@@ -500,15 +518,17 @@ export class DynamicSplatMesh extends THREE.Mesh {
      * @param {number} renderSplatCount Number of valid entries in globalIndexes
      */
     updateRenderIndexes(globalIndexes, renderSplatCount) {
-        if (!this.geometry || this.geometry === Constants.dummyGeometry) return;
-        const splatIndexAttribute = this.geometry.attributes.splatIndex;
+        const geometry = this.geometry;
+        const splatIndexAttribute = geometry.attributes.splatIndex;
         const count = Math.min(renderSplatCount, splatIndexAttribute.array.length);
+
         // The sorted indexes array of the sort worker can be larger than our index buffer
         splatIndexAttribute.set(globalIndexes.subarray(0, count));
         splatIndexAttribute.needsUpdate = true;
+
         //TODO: only upload the used range: splatIndexAttribute.addUpdateRange(0, count) (three r159+)
-        this.geometry.instanceCount = count;
-        this.geometry.setDrawRange(0, count);
+        geometry.instanceCount = count;
+        geometry.setDrawRange(0, count);
         this.renderSplatCount = count;
         if (count > 0 && this.firstRenderTime === -1) this.firstRenderTime = performance.now();
     }
@@ -627,7 +647,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
     }
 
     getSplatTree() {
-        return this.baseSplatTree;
+        return this.splatTree;
     }
 
     getSceneTransform(sceneIndex, outTransform) {
