@@ -10,7 +10,7 @@ import {SplatSubTree, SplatTree, SplatTreeNode} from "../splattree/SplatTree.js"
 import {VirtualSplatBuffer} from "../loaders/SplatBuffer.js";
 import {GPUSplatAllocator} from '../LOD/GPUSplatAllocator.js'
 import {clamp} from "../Util.js";
-import {SceneFormat} from "../../index.js";
+import {SceneFormat} from "../loaders/SceneFormat.js";
 
 
 
