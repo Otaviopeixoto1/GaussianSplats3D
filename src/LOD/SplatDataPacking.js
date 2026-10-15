@@ -103,15 +103,20 @@ export class SplatDataPacking {
      * Scene transforms are NOT applied: the DynamicSplatMesh always renders in dynamic mode, where the
      * transform of each scene is applied in the vertex shader.
      * 
-     *  TODO: DATA MUST ALREADY COME THIS WAY FROM THE SplatBuffer
+     *  TODO: DATA MUST ALREADY COME THIS WAY FROM THE SplatBuffer. DIRECTLY load into staging buffer !
      *      
      * @param {SplatBuffer} splatBuffer
      * @param {number} srcFrom first splat (inclusive), index local to the splat buffer
      * @param {number} srcTo last splat (inclusive), index local to the splat buffer
      * @param {SplatDataFormat} format
      * @param {number} minimumAlpha splats with an alpha below this value get alpha = 0
-     * @return {{splatCount:number, centers:Float32Array, centerColors:Uint32Array,
-     *           covariances:(Float32Array|Uint32Array|undefined), scaleRotations:(Float32Array|undefined)}}
+     * @return {{
+     *      splatCount: number,
+     *      centers: Float32Array,
+     *      centerColors: Uint32Array,
+     *      covariances: (Float32Array|Uint32Array|undefined),
+     *      scaleRotations: (Float32Array|undefined)
+     *  }}
      */
     static packFromSplatBuffer(splatBuffer, srcFrom, srcTo, format, minimumAlpha = 1) {
         const splatCount = srcTo - srcFrom + 1;

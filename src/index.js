@@ -19,15 +19,18 @@ import { RenderMode } from './RenderMode.js';
 import { LogLevel } from './LogLevel.js';
 import { SceneRevealMode } from './SceneRevealMode.js';
 import { SplatRenderMode } from './SplatRenderMode.js';
-import { KSplatTreeBuffer } from './loaders/ksplat/KSplatTreeLoader.js'
+import { ITiledSplatFileLoader } from './loaders/TiledSplatFileLoader.js'
+import { KSplatTreeBuffer, KSplatTreeLoader } from './loaders/ksplat/KSplatTreeLoader.js'
 
 export {
     PlyParser,
     PlayCanvasCompressedPlyParser,
+    ITiledSplatFileLoader,
     PlyLoader,
     SpzLoader,
     SplatLoader,
     KSplatLoader,
+    KSplatTreeLoader,
     LoaderUtils,
     SplatBuffer,
     KSplatTreeBuffer,

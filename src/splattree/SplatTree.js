@@ -5,10 +5,11 @@ import { SceneFormat } from "../loaders/SceneFormat.js";
 import { KSplatTreeBuffer } from "../loaders/ksplat/KSplatTreeLoader.js";
 import { KSplatHeader } from "../loaders/SplatBuffer.js";
 import { StatsCollector } from '../../util/StatsCollector.js';
+import {DEFAULT_NODE_ALLOCATION} from "../LOD/GPUSplatAllocator.js";
 
 export class SplatTreeNode {
 
-    constructor(min, max, depth, id) {
+    constructor(min, max, depth, id, allocation = DEFAULT_NODE_ALLOCATION) {
         //TODO: remove redundant min and max values
         this.min = new THREE.Vector3().copy(min);
         this.max = new THREE.Vector3().copy(max);
@@ -20,6 +21,16 @@ export class SplatTreeNode {
         this.numSplats = 0;
         this.id = id;
         this.sampled = false;
+
+        // For dynamic mode:
+        //TODO: key and allocation so that the node can have all
+        // TODO: DEFINE A NODE ALLOCATION STATUS TO SEE IF NODE IS IN MEMORY OR NOT
+        this.key = null; //The key that will be used for indexing node memory (3D tiles: level, x, y, z)
+
+        /**
+         * @member {SplatNodeAllocation} allocation The current allocation of the node. Null when not allocated
+         */
+        this.allocation = allocation;
     }
 }
 

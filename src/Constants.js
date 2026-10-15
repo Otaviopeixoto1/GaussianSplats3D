@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import {SplatRenderMode} from "./SplatRenderMode.js";
 
 export class Constants {
 
@@ -16,6 +17,12 @@ export class Constants {
     //
     static dummyGeometry = new THREE.BufferGeometry();
     static dummyMaterial = new THREE.MeshBasicMaterial();
+
+    static DEFAULT_SPLAT_FORMAT = {
+        splatRenderMode: SplatRenderMode.ThreeD,
+        covarianceCompressionLevel: 1,
+        scaleRotationCompressionLevel: 0
+    }
 
     static COVARIANCES_ELEMENTS_PER_SPLAT = 6;
     static CENTER_COLORS_ELEMENTS_PER_SPLAT = 4;

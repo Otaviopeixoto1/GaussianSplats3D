@@ -577,6 +577,10 @@ export class SplatMesh extends THREE.Mesh {
         return dataUpdateResults;
     }
 
+    requestSplatNodeLoad(sceneId,  node) {
+        console.error("SplatMesh::requestSplatNodeLoad: this method should not be called for the regular SplatMesh (only DynamicSplatMesh)");
+    }
+
     freeIntermediateSplatData() {
 
         const deleteTextureData = (texture) => {

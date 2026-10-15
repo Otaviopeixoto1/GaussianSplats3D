@@ -4,6 +4,7 @@ import { OrbitControls } from './OrbitControls.js';
 import { PlyLoader } from './loaders/ply/PlyLoader.js';
 import { SplatLoader } from './loaders/splat/SplatLoader.js';
 import { KSplatLoader } from './loaders/ksplat/KSplatLoader.js';
+import { KSplatTreeLoader } from './loaders/ksplat/KSplatTreeLoader.js';
 import { SpzLoader } from './loaders/spz/SpzLoader.js';
 import { sceneFormatFromPath } from './loaders/Utils.js';
 import { LoadingSpinner } from './ui/LoadingSpinner.js';
@@ -314,7 +315,7 @@ export class Viewer {
         if (!this.dropInMode) this.init();
 
         this.minimumNodePixelSize = options.minimumNodePixelSize || 30;
-        this.pointBudget = options.splatBudget || 1000000;
+        this.splatBudget = options.splatBudget || 1000000;
     }
 
     createSplatMesh() {
@@ -1184,7 +1185,7 @@ export class Viewer {
                     progressiveBuild = false;
                     //TODO: return a VirtualSplatBuffer
                     // this virtual buffer will only work for getting the offsets into the data we need to load
-                } else {
+                    return KSplatTreeLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);
                 }
                 return KSplatLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, headers);
             } else if (format === SceneFormat.Ply) {
@@ -1370,20 +1371,12 @@ export class Viewer {
      * @return {object}
      */
     addSplatBuffersToDynamicMesh(splatBuffers, splatBufferOptions) {
-        // TODO: Dont even load the splatBuffers. This is just for testing
+        // TODO: Dont load the splatBuffers. This is just for testing
         const virtualSplatBuffers = splatBuffers.map((splatBuffer) => {
-            return (splatBuffer instanceof VirtualSplatBuffer) ? splatBuffer : VirtualSplatBuffer.fromSplatBuffer(splatBuffer);
+            return (splatBuffer instanceof VirtualSplatBuffer) ? splatBuffer : new VirtualSplatBuffer(new KSplatTreeLoader(splatBuffer));
         });
 
-        // Only the root nodes are loaded for now, the whole root has to fit in the splat budget to be rendered.
-        let rootSplatCount = 0;
-        for (const virtualSplatBuffer of virtualSplatBuffers) rootSplatCount += virtualSplatBuffer.getSplatCount();
-        if (rootSplatCount > this.pointBudget) {
-            console.warn(`Viewer: the root nodes hold ${rootSplatCount} splats, more than the splat budget (${this.pointBudget}). ` +
-                'Nodes that do not fit in the budget are not rendered, increase the "splatBudget" option.');
-        }
-
-        this.splatMesh.build(virtualSplatBuffers, splatBufferOptions, this.preSortCommandBuffer);
+        this.splatMesh.build(virtualSplatBuffers, splatBufferOptions, this.preSortCommandBuffer, this.splatBudget * 1.5);
         // Make sure the mesh gets drawn so that its nodes are uploaded
         this.forceRenderNextFrame();
         return {
@@ -2360,7 +2353,7 @@ export class Viewer {
 
             const numPointsOnNode = node.numSplats;
 
-            if (numVisiblePoints + numPointsOnNode > this.pointBudget) {
+            if (numVisiblePoints + numPointsOnNode > this.splatBudget) {
                 break;
             }
 
@@ -2368,7 +2361,7 @@ export class Viewer {
 
             //use level <= 2 if things are too ugly
             let visible = (level <= 1) || insideFrustum;
-            visible = visible && !(numVisiblePoints + numPointsOnNode > this.pointBudget);
+            visible = visible && !(numVisiblePoints + numPointsOnNode > this.splatBudget);
             // visible = visible && !(numVisiblePointsInPointClouds.get(pointcloud)! + node.getNumPoints() > pointcloud.pointBudget);
             visible = visible && level < maxLevel;
 
@@ -2446,6 +2439,11 @@ export class Viewer {
 
             let dd = dx * dx + dy * dy + dz * dz;
             let distanceToNode = Math.sqrt(dd);
+
+
+            //TODO:
+            // If the node is from a DynamicMesh it needs to be treated different ! We can load it
+            // call SplatMesh.requestSplatNodeLoad ...
 
 
             if (node.data && node.data.indexes) {

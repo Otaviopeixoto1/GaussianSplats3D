@@ -276,13 +276,14 @@ export class KSplatHeader {
         headerArrayFloat32[10] = header.maxSphericalHarmonicsCoeff || DefaultSphericalHarmonics8BitCompressionHalfRange;
     }
 
-    static parseSectionHeaders(header, buffer, secLoadedCountsToMax) {
+    // TODO: REWRITE parseSectionHeaders to accept the section headers without the offset
+    static parseSectionHeaders(header, buffer, secLoadedCountsToMax, bufferSectionHeaderOffset = KSplatHeader.HeaderSizeBytes) {
         const compressionLevel = header.compressionLevel;
 
         const maxSectionCount = header.maxSectionCount;
-        const sectionHeaderArrayUint16 = new Uint16Array(buffer, KSplatHeader.HeaderSizeBytes, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 2);
-        const sectionHeaderArrayUint32 = new Uint32Array(buffer, KSplatHeader.HeaderSizeBytes, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
-        const sectionHeaderArrayFloat32 = new Float32Array(buffer, KSplatHeader.HeaderSizeBytes, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
+        const sectionHeaderArrayUint16 = new Uint16Array(buffer, bufferSectionHeaderOffset, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 2);
+        const sectionHeaderArrayUint32 = new Uint32Array(buffer, bufferSectionHeaderOffset, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
+        const sectionHeaderArrayFloat32 = new Float32Array(buffer, bufferSectionHeaderOffset, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
 
         const sectionHeaders = [];
         let sectionHeaderBase = 0;
@@ -385,9 +386,13 @@ export class KSplatHeader {
         };
     }
 
+    /**
+     * @param {SplatBuffer} splatBuffer
+     */
     static calculateTotalSplatBufferSize(splatBuffer) {
         const buffer = splatBuffer.bufferData;
-        const header = KSplatHeader.parseHeaderData(buffer); //TODO: Remove
+        //TODO: Remove this after figuring out the diff between splatCount and maxSplatCount stored in the header...
+        const header = KSplatHeader.parseHeaderData(buffer);
 
         const compressionLevel = header.compressionLevel;
         const maxSectionCount = header.maxSectionCount;
@@ -493,6 +498,10 @@ export class SplatBuffer {
     constructor(bufferData, secLoadedCountsToMax = true) {
         this.bufferData = bufferData;
         this.globalSplatIndexToSectionMap = [];
+
+        // True when this buffer is loaded form a .kstree file (this means that the internal buffer has
+        // all the octree data)
+        this.isKSTree = false;
 
         this.header = KSplatHeader.constructFromBuffer(bufferData, secLoadedCountsToMax);
 
@@ -1749,66 +1758,27 @@ export class SplatBuffer {
 export class VirtualSplatBuffer {
 
     /**
-     * @param {SplatBuffer | ArrayBuffer} source
+     * @param {ITiledSplatFileLoader} loader
      * @param {boolean} secLoadedCountsToMax
      */
-    constructor(source, secLoadedCountsToMax = true) {
-        // TODO: keep a DynamicSplatLoader object instead of the full SplatBuffer, which will use (level, x, y, z) to load
-        //  data from a specific byte range.
-        this.splatBuffer = (source instanceof SplatBuffer) ? source : new SplatBuffer(source, secLoadedCountsToMax);
-        this.bufferData = this.splatBuffer.bufferData;
-        this.header = this.splatBuffer.header;
+    constructor(loader, secLoadedCountsToMax = true) {
+        this.loader = loader;
+        this.format = Constants.DEFAULT_SPLAT_FORMAT;
 
-        // Packed node data cache: nodeKey -> { formatKey, data }
+
+        // Packed node data cache:
         this.nodeDataCache = new Map();
-        this.rootBounds = null;
     }
 
-    static fromSplatBuffer(splatBuffer) {
-        return new VirtualSplatBuffer(splatBuffer);
+    /**
+     * @param {SplatDataFormat} format
+     */
+    setFormat(format) {
+        this.format = format;
     }
 
     static getNodeKey(level, x, y, z) {
         return `${level}/${x}/${y}/${z}`;
-    }
-
-    static isRootNode(level, x, y, z) {
-        return level === 0 && x === 0 && y === 0 && z === 0;
-    }
-
-    static getFormatKey(format, minimumAlpha) {
-        return `${format.splatRenderMode}|${format.covarianceCompressionLevel}|${format.scaleRotationCompressionLevel}|${minimumAlpha}`;
-    }
-
-    getSplatCount() {
-        return this.splatBuffer.getSplatCount();
-    }
-
-    getMaxSplatCount() {
-        return this.splatBuffer.getMaxSplatCount();
-    }
-
-    getMinSphericalHarmonicsDegree() {
-        return this.splatBuffer.getMinSphericalHarmonicsDegree();
-    }
-
-    getSceneCenter() {
-        return this.splatBuffer.getSceneCenter();
-    }
-
-    /**
-     * Returns Range of splats stored in the given node, or null if the node does not exist.
-     *    TODO: JUST USE SOME DYNAMIC LOADER THAT CONVERTS XYZ INTO RANGE INTERNALLY. IMPLEMENT ON THE KsplatTreeLoader
-     * @return {{from: number, to: number, count: number} | null}
-     */
-    getNodeSplatRange(level, x, y, z) {
-        // TODO: EXTEND TO LOAD ANY NODE
-        if (!VirtualSplatBuffer.isRootNode(level, x, y, z)) return null;
-        //
-        // TODO: Map the node id to the actual range
-        //
-        const count = this.splatBuffer.getSplatCount();
-        return { from: 0, to: count / 2 - 1, count: count / 2 };
     }
 
     /**
@@ -1821,28 +1791,22 @@ export class VirtualSplatBuffer {
      * @param {number} x
      * @param {number} y
      * @param {number} z
-     * @param {SplatDataFormat} format GPU layout, from GPUSplatAllocator.getSplatDataFormat()
      * @param {number} [minimumAlpha=1] splats with a lower alpha are made fully transparent
      * @return {Object | null} null if the node does not exist, otherwise returns the packed node data
      */
-    getSplatNodeData(level, x, y, z, format, minimumAlpha = 1) {
-        // TODO: JUST USE SOME DYNAMIC LOADER THAT CONVERTS XYZ INTO RANGE INTERNALLY
-        const range = this.getNodeSplatRange(level, x, y, z);
-        if (!range || range.count <= 0) return null;
-
+    getSplatNodeData(level, x, y, z, minimumAlpha = 1) {
         const key = VirtualSplatBuffer.getNodeKey(level, x, y, z);
-        const formatKey = VirtualSplatBuffer.getFormatKey(format, minimumAlpha);
         const cached = this.nodeDataCache.get(key);
-        if (cached && cached.formatKey === formatKey && cached.data.splatCount === range.count) return cached.data;
+        if (cached) return cached;
 
-        const packed = SplatDataPacking.packFromSplatBuffer(this.splatBuffer, range.from, range.to, format, minimumAlpha);
+        const packed = this.loader.loadNode(level, x, y, z, this.format);
         const data = {
             key,
             level, x, y, z,
-            format: { ...format },
+            format: { ...this.format },
             ...packed
         };
-        this.nodeDataCache.set(key, { formatKey, data });
+        this.nodeDataCache.set(key, data);
         return data;
     }
 
@@ -1856,56 +1820,9 @@ export class VirtualSplatBuffer {
     /**
      * Retrieves the splat subtree data for the node mapped into the tuple (level, x, y, z). Uses the same conventions
      * as 3D tiles with implicit tiling. For now only the root subtree exists, and it contains only the root node.
-     * @return {Object | null} null if the subtree does not exist, otherwise returns the splat Subtree data
+     * @return {SplatSubTree | null} null if the subtree does not exist, otherwise returns the splat Subtree data
      */
-    getSplatSubtreeData(level, x, y, z) {
-        if (!VirtualSplatBuffer.isRootNode(level, x, y, z)) return null;
-
-        //TODO: EXTEND TO LOAD A FULL SUBTREE. CHANGE THE SUBTREE FORMAT
-
-        const range = this.getNodeSplatRange(0, 0, 0, 0);
-        const bounds = this.computeRootBounds();
-        return {
-            level, x, y, z,
-            min: bounds.min.clone(),
-            max: bounds.max.clone(),
-            nodes: [{
-                level: 0, x: 0, y: 0, z: 0,
-                splatCount: range ? range.count : 0,
-                min: bounds.min.clone(),
-                max: bounds.max.clone(),
-                children: []
-            }],
-            childSubtrees: []
-        };
-    }
-
-    /**
-     * Bounding box of all splat centers in the buffer (untransformed). Cached until the splat count changes.
-     */
-    computeRootBounds() {
-        const splatCount = this.splatBuffer.getSplatCount();
-        if (this.rootBounds && this.rootBounds.splatCount === splatCount) return this.rootBounds;
-
-        const min = new THREE.Vector3(Infinity, Infinity, Infinity);
-        const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
-        if (splatCount > 0) {
-            const centers = new Float32Array(splatCount * 3);
-            this.splatBuffer.fillSplatCenterArray(centers, undefined, 0, splatCount - 1, 0);
-            for (let i = 0; i < splatCount * 3; i += 3) {
-                const cx = centers[i], cy = centers[i + 1], cz = centers[i + 2];
-                if (cx < min.x) min.x = cx;
-                if (cy < min.y) min.y = cy;
-                if (cz < min.z) min.z = cz;
-                if (cx > max.x) max.x = cx;
-                if (cy > max.y) max.y = cy;
-                if (cz > max.z) max.z = cz;
-            }
-        } else {
-            min.set(0, 0, 0);
-            max.set(0, 0, 0);
-        }
-        this.rootBounds = { min, max, splatCount };
-        return this.rootBounds;
+    getSplatSubtree(level, x, y, z) {
+        return this.loader.loadSubtree(level, x, y, z);
     }
 }

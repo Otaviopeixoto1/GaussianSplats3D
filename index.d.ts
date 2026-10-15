@@ -171,6 +171,23 @@ export class DropInViewer extends Group {
     public dispose(): Promise<void>;
 }
 
+export interface SplatDataFormat {
+    splatRenderMode: SplatRenderMode;
+    covarianceCompressionLevel: number;
+    scaleRotationCompressionLevel: number;
+}
+
+export abstract class ITiledSplatFileLoader {
+    abstract loadNode(level: number, x: number, y: number, z: number, format: SplatDataFormat): Object | null;
+    abstract loadSubtree(level: number, x: number, y: number, z: number): Object | null;
+}
+
+export class KSplatTreeLoader extends ITiledSplatFileLoader {
+    public loadNode(level: number, x: number, y: number, z: number, format: SplatDataFormat): Object | null;
+    public loadSubtree(level: number, x: number, y: number, z: number): SplatSubTree | null;
+    public static downloadFile(splatBuffer: SplatBuffer, fileName: string): void;
+    public static loadHeader(url: string): Promise<Object>;
+}
 
 export class KSplatLoader {
     public static downloadFile(splatBuffer: SplatBuffer, fileName: string): void;

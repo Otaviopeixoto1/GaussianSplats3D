@@ -3,8 +3,10 @@ import { fetchWithProgress, delayedExecute, nativePromiseWithExtractedComponents
 import { LoaderStatus } from '../LoaderStatus.js';
 import { Constants } from '../../Constants.js';
 import * as THREE from "three";
-import {SplatTreeNode} from "../../splattree/SplatTree.js";
-
+import {SplatTreeNode, SplatSubTree} from "../../splattree/SplatTree.js";
+import {ITiledSplatFileLoader} from '../TiledSplatFileLoader.js'
+import {SplatDataPacking} from "../../LOD/SplatDataPacking.js";
+import {DEFAULT_NODE_ALLOCATION} from "../../LOD/GPUSplatAllocator.js";
 
 export class KSplatTreeBuffer {
     constructor(splatBuffer, subTree) {
@@ -108,7 +110,14 @@ export class KSplatTreeBuffer {
     }
 
 
-    static deserializeOctreeBuffer(fileBuffer, offset) {
+    // TODO: FOR NOW ADD OPTION TO DESERIALIZE AS TILES...
+    // TODO: LATER REWORK THE TREE FORMAT
+    /**
+     * @param {ArrayBuffer} fileBuffer
+     * @param {number} offset
+     * @param {SplatNodeAllocation} allocation The allocation of the node. Defaults to static allocation (the application will assume all nodes are pre-allocated)
+     */
+    static deserializeOctreeBuffer(fileBuffer, offset, allocation= DEFAULT_NODE_ALLOCATION) {
         const view = new DataView(fileBuffer, offset);
         let byteOffset = 0;
 
@@ -199,7 +208,7 @@ export class KSplatTreeBuffer {
                     continue;
                 }
 
-                const childNode = new SplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.depth + 1, childId);
+                const childNode = new SplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.depth + 1, childId, allocation);
                 const dataOffsets = nodeDataOffsets[0];
                 //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
                 childNode.data = {
@@ -215,7 +224,7 @@ export class KSplatTreeBuffer {
 
         const treeRootOffsets = nodeDataOffsets[0];
         const treeRootData = nodeDataList[0];
-        const treeRoot = new SplatTreeNode(treeMin, treeMax, 0, 0);
+        const treeRoot = new SplatTreeNode(treeMin, treeMax, 0, 0, allocation);
         //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
         treeRoot.data = {
             'indexes': treeRootData
@@ -248,7 +257,187 @@ export class KSplatTreeBuffer {
     }
 }
 
-export class KSplatTreeLoader {
+export class KSplatTreeLoader extends ITiledSplatFileLoader {
+
+    /**
+     * TODO: Loads a SplatBuffer from a .kstree in immediate mode (the full content is loaded into memory at once)
+     *  Take the url as argument instead of the full buffer
+     * @param {SplatBuffer} splatBuffer Must be a .kstree SplatBuffer
+     */
+    constructor(splatBuffer) {
+        super()
+
+        //////////////////////////////////////////////// TEMPORARY  TODO: REMOVE and parse only the file headers !!!
+        if (!splatBuffer.isKSTree) {
+            this.splatBuffer = null;
+            console.error("KSplatTreeLoader::constructor: Wrong SplatBuffer format. The splatBuffer must be in the .kstree format");
+            return;
+        }
+        this.splatBuffer = splatBuffer;
+        ////////////////////////////////////////////////
+
+
+        //TODO: Load just the header. Its all information needed at first
+        //KSplatTreeLoader.loadHeader(url)
+
+        //TODO: Break it into smaller subtrees
+        this.splatSubTree = KSplatTreeLoader.loadTree(splatBuffer);
+
+        // A map for converting from the linearized 3D tile indexes (x + 2 * y + 4 * z) into the
+        // indexing scheme of the node's children (see deserializeOctreeBuffer() above for how the children bounds are ordered)
+        this.nodeIndexRemap = [
+            // Bottom section nodes
+            4,
+            5,
+            7,
+            6,
+
+            //Upper section nodes
+            0,
+            1,
+            3,
+            2
+        ]
+    }
+
+    /**
+     * Returns Range of splats stored in the given node, or null if the node does not exist.
+     * @return {{from: number, to: number, count: number} | null}
+     */
+    getNodeSplatRange(level, x, y, z) {
+        const path = [];
+        let xp = 0;
+        let yp = 0;
+        let zp = 0;
+        for (let i = level - 1; i >= 0; i--) {
+            const p = 1 << (i);
+
+            const xi = Math.floor(x / p);
+            const yi = Math.floor(y / p);
+            const zi = Math.floor(z / p);
+
+            // relative/recursive index:
+            const xr = xi - 2 * xp;
+            const yr = yi - 2 * yp;
+            const zr = zi - 2 * zp;
+            const id = xr + 2 * yr + 4 * zr;
+            path.push(id);
+
+            xp = xi;
+            yp = yi;
+            zp = zi;
+        }
+
+        let node = this.splatSubTree.rootNode;
+        for (const i of path) {
+            const id = this.nodeIndexRemap[i];
+            if (id === undefined) {
+                console.error("KSplatTreeLoader::getNodeSplatRange: node path id out of bounds", id, "Node:", level, x, y, z);
+                return null;
+            }
+            const child = node.children[this.nodeIndexRemap[i]];
+            if (child === undefined) {
+                console.error("KSplatTreeLoader::getNodeSplatRange: child id not found", node, level, x, y, z);
+                return null;
+            }
+
+            node = child;
+        }
+
+        const nodeIndexes = node.data.indexes;
+        console.log(nodeIndexes.length, "For: ", level, x, y, z);
+        if (nodeIndexes.length === 0) {
+            return null
+        }
+
+        return { from: nodeIndexes[0], to: nodeIndexes[nodeIndexes.length - 1], count: nodeIndexes.length };
+    }
+
+    loadNode(level, x, y, z, format) {
+        const nodeRange = this.getNodeSplatRange(level, x, y, z);
+        if (!nodeRange) {
+            return null;
+        }
+
+        /////////////////////////////////////////////// TEMPORARY
+
+        //TODO: THIS IS WAY TOO SLOW. Load raw bytes. Decode on worker from a worker pool
+        // Load the entire raw range of splats. From: offset + bytesPerSplat * (from), To: offset + bytesPerSplat * (to)
+        const packed = SplatDataPacking.packFromSplatBuffer(
+            this.splatBuffer,
+            nodeRange.from, nodeRange.to,
+            format,
+            0 //TODO: add minimumAlpha arg
+        );
+
+        ///////////////////////////////////////////////
+
+        return packed;
+    }
+
+    loadSubtree(level, x, y, z) {
+        //TODO: Add support for loading subtrees that are not root !
+        const isRootNode = level === 0 && x === 0 && y === 0 && z === 0;
+        if (!isRootNode) {
+            return null
+        }
+
+        return this.splatSubTree;
+    }
+
+    static async loadHeader(url) {
+        const headerBuffer = await ITiledSplatFileLoader.fetchBytes(
+            url,
+            0,
+            KSplatHeader.HeaderSizeBytes
+        );
+
+        if (!headerBuffer) {
+            return {};
+        }
+
+        KSplatTreeLoader.checkVersion(headerBuffer);
+        const headerData = KSplatHeader.parseHeaderData(headerBuffer);
+        headerData.sectionCount = headerData.maxSectionCount;
+        headerData.splatCount = headerData.maxSplatCount;
+
+        const sectionsBuffer = await ITiledSplatFileLoader.fetchBytes(
+            url,
+            KSplatHeader.HeaderSizeBytes,
+            KSplatHeader.HeaderSizeBytes + headerData.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes
+        );
+        const sectionHeadersData = KSplatHeader.parseSectionHeaders(headerData, sectionsBuffer, true, 0);
+        return new KSplatHeader(headerData, sectionHeadersData);
+    }
+
+    /**
+     * Loads an entire range of
+     */
+    static loadSplats() {
+        //
+    }
+
+    /**
+     * @param {SplatBuffer} splatBuffer
+     * @return {SplatSubTree}
+     */
+    // TODO: load from url. Only load the tree portion
+    static loadTree(splatBuffer) {
+        const offset = KSplatHeader.calculateTotalSplatBufferSize(splatBuffer);
+        const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(
+            splatBuffer.bufferData,
+            offset,
+            {
+                static: false,
+                textureAllocations: null
+            }
+        );
+        const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
+        subtree.sceneMin = subTreeRoot.min;
+        subtree.sceneMax = subTreeRoot.max;
+        subtree.rootNode = subTreeRoot;
+        return subtree;
+    }
 
    static checkVersion(buffer) {
         const minVersionMajor = KSplatHeader.CurrentMajorVersion;
@@ -264,6 +453,9 @@ export class KSplatTreeLoader {
         }
     };
 
+    /**
+     * Loads a KSplatTree in immediate mode (the full content is loaded into memory at once inside a SplatBuffer object)
+     */
     static loadFromURL(fileName, externalOnProgress, progressiveLoadToSplatBuffer, onSectionBuilt, headers) {
         let directLoadBuffer;
         let directLoadSplatBuffer;
@@ -443,9 +635,10 @@ export class KSplatTreeLoader {
 
         return fetchWithProgress(fileName, localOnProgress, !progressiveLoadToSplatBuffer, headers).then((fullBuffer) => {
             if (externalOnProgress) externalOnProgress(0, '0%', LoaderStatus.Processing);
-            const loadPromise = progressiveLoadToSplatBuffer ? directLoadPromise.promise : KSplatLoader.loadFromFileData(fullBuffer);
+            const loadPromise = progressiveLoadToSplatBuffer ? directLoadPromise.promise : KSplatTreeLoader.loadFromFileData(fullBuffer);
             return loadPromise.then((splatBuffer) => {
                 if (externalOnProgress) externalOnProgress(100, '100%', LoaderStatus.Done);
+                splatBuffer.isKSTree = true;
                 return splatBuffer;
             });
         });
@@ -453,30 +646,8 @@ export class KSplatTreeLoader {
 
     static loadFromFileData(fileData) {
         return delayedExecute(() => {
-            KSplatLoader.checkVersion(fileData);
+            KSplatTreeLoader.checkVersion(fileData);
             return new SplatBuffer(fileData);
         });
     }
-
-    static downloadFile = function() {
-
-        let downLoadLink;
-
-        //TODO: Use the Splatbuffer AND THE TREE. Store them in a buffer, then export
-        return function(splatBuffer, fileName) {
-            const blob = new Blob([splatBuffer.bufferData], {
-                type: 'application/octet-stream',
-            });
-
-            if (!downLoadLink) {
-                downLoadLink = document.createElement('a');
-                document.body.appendChild(downLoadLink);
-            }
-            downLoadLink.download = fileName;
-            downLoadLink.href = URL.createObjectURL(blob);
-            downLoadLink.click();
-        };
-
-    }();
-
 }

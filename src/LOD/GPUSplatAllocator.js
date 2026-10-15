@@ -10,6 +10,30 @@ import {WebGLCapabilities} from "../three-shim/WebGLCapabilities.js";
 import {SplatDataPacking} from "./SplatDataPacking.js";
 
 
+/**
+ * The full splat allocation info for a single node
+ * @typedef {Object} PagedTextureAllocation
+ * @property {number} startPage
+ * @property {number} endPage
+ */
+
+/**
+ *
+ * @typedef {Object} SplatNodeAllocation
+ * @property {boolean} static false when the viewer must request for allocations
+ * @property {number} offset base offset of the splat indexes form an allocation
+ * @property {Record<string, PagedTextureAllocation> | null} textureAllocations
+ *
+ */
+
+/**
+ * The default allocation type of SplatMesh.
+ */
+export const DEFAULT_NODE_ALLOCATION = {
+    static: true,
+    offset: -1,
+    textureAllocations: null,
+}
 
 class PagedTexture {
 
@@ -176,7 +200,6 @@ export class SplatStagingBuffer {
         this.scaleRotationsAllocation = scaleRotationsAlloc;
         this.sphericalHarmonicsAllocation = shAlloc;
         this.sceneIndexesAllocation = sceneIndexesAlloc;
-        this.freed = false;
     }
 
     get centerColorsBuffer() {
@@ -225,12 +248,10 @@ export class SplatStagingBuffer {
     }
 
     // Finishes all changes and upload them to the GPU
+    /**
+     * @return {SplatNodeAllocation}
+     */
     submit() {
-        if (this.freed) {
-            console.error(new Error("SplatStagingBuffer::submit: allocation was already freed !!!"));
-            return;
-        }
-
         this.allocator.submitSplatAllocation("centerColors", this.centerColorsAllocation);
 
         // 3D vs 2D:
@@ -245,6 +266,18 @@ export class SplatStagingBuffer {
         }
 
         this.allocator.submitSplatAllocation("sceneIndexes", this.sceneIndexesAllocation);
+
+        return {
+            static: false,
+            offset: this.splatOffset,
+            textureAllocations: {
+                'centerColors': this.centerColorsAllocation,
+                'covariances': this.covariancesAllocation,
+                'scaleRotations': this.scaleRotationsAllocation,
+                'sphericalHarmonics': this.sphericalHarmonicsAllocation,
+                'sceneIndexes': this.sceneIndexesAllocation,
+            }
+        };
     }
 }
 
@@ -803,19 +836,18 @@ export class GPUSplatAllocator {
 
     /**
      * Returns the allocations from the given SplatStagingBuffer to their textures.
-     * @param {SplatStagingBuffer} stagingBuffer
+     * @param {SplatNodeAllocation} allocation
      */
-    free(stagingBuffer) {
-        if (!stagingBuffer || stagingBuffer.freed) return;
-        const freeAlloc = (name, allocation) => {
-            if (allocation) this.splatTextureDescriptors[name].texture.freePages([allocation]);
+    free(allocation) {
+        const freeAlloc = (name) => {
+            const alloc = allocation.textureAllocations[name];
+            if (alloc) this.splatTextureDescriptors[name].texture.freePages([alloc]);
         };
-        freeAlloc('centerColors', stagingBuffer.centerColorsAllocation);
-        freeAlloc('covariances', stagingBuffer.covariancesAllocation);
-        freeAlloc('scaleRotations', stagingBuffer.scaleRotationsAllocation);
-        freeAlloc('sphericalHarmonics', stagingBuffer.sphericalHarmonicsAllocation);
-        freeAlloc('sceneIndexes', stagingBuffer.sceneIndexesAllocation);
-        stagingBuffer.freed = true;
+        freeAlloc('centerColors');
+        freeAlloc('covariances');
+        freeAlloc('scaleRotations');
+        freeAlloc('sphericalHarmonics');
+        freeAlloc('sceneIndexes');
     }
 
     /**

@@ -10,6 +10,7 @@ import {SplatSubTree, SplatTree, SplatTreeNode} from "../splattree/SplatTree.js"
 import {VirtualSplatBuffer} from "../loaders/SplatBuffer.js";
 import {GPUSplatAllocator} from '../LOD/GPUSplatAllocator.js'
 import {clamp} from "../Util.js";
+import {SceneFormat} from "../../index.js";
 
 
 
@@ -79,9 +80,6 @@ export class DynamicSplatMesh extends THREE.Mesh {
         //TODO: store octree on the scene itself...
         this.baseSplatTree = null;
         this.splatTree = null;
-
-        // Resident nodes: "sceneIndex:level/x/y/z" -> { sceneIndex, level, x, y, z, node, stagingBuffer, splatOffset, splatCount }
-        this.residentNodes = new Map();
 
         // Command buffer of the sort worker. Every time a node is loaded, its centers and scene indexes are pushed here,
         // stored at the node's global splat indexes, so the sort worker knows about the splat positions.
@@ -153,7 +151,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
      *         scale (Array<number>):      Scene scale, defaults to [1, 1, 1]
      * }
      * @param {WorkerCommandBuffer} presortCommandBuffer The command buffer used for presort commands (sort worker splat data uploads)
-     * @param {number=} maxRenderSplatCount Size of the splat index buffer. Defaults to the total splat count of the virtual splat buffers.
+     * @param {number} maxRenderSplatCount Size of the splat index buffer. Defaults to the total splat count of the virtual splat buffers.
      */
     build(virtualSplatBuffers, sceneOptions = [], presortCommandBuffer, maxRenderSplatCount) {
         if (this.logLevel >= LogLevel.Info) {
@@ -165,15 +163,22 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.scenes.forEach((scene) => scene.removeFromParent());
         this.scenes = [];
         this.sceneOptions = [];
-        this.residentNodes.clear();
         this.pendingNodeLoads = [];
         this.presortCommandBuffer = presortCommandBuffer || null;
 
-        let totalSplatCount = 0;
-        for (let virtualSplatBuffer of virtualSplatBuffers) totalSplatCount += virtualSplatBuffer.getSplatCount();
+        //Validate. DynamicMesh only supports .kstree files, any other format cannot be loaded
+        for(const options of sceneOptions) {
+            if (options.format !== SceneFormat.KSTree) {
+                console.error(`DynamicSplatMesh::build: Scene format: ${options.format}. DynamicSplatMesh ony works with .kstree format (${SceneFormat.KSTree})`)
+            }
+        }
+
+        for (let virtualSplatBuffer of virtualSplatBuffers) {
+            virtualSplatBuffer.setFormat(this.splatAllocator.getSplatDataFormat());
+        }
 
         //TODO: Use splat budget instead !!
-        const maxSplatCount = maxRenderSplatCount || Math.max(totalSplatCount, 1);
+        const maxSplatCount = maxRenderSplatCount;
         this.minSphericalHarmonicsDegree = 0; // TODO: ADD SH support
 
         this.geometry = SplatGeometry.build(maxSplatCount);
@@ -203,13 +208,9 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
         // Request the root node of every scene. The nodes are uploaded on the next onBeforeRender().
         // Every loaded node also pushes its centers + scene indexes into the presort command buffer (see loadSplatNode()),
-        // at the node's global splat indexes, this is how the sort worker knows about the splat positions.
-
-        // TODO: Dont duplicate the data loading. get the centers from the previous GPU Texture upload step, then add them to the worker
-        // The worker needs to keep its own pool of data and update whenever there is a GPU Texture upload
-        // ----------------> How to pass data to the worker efficiently ???
+        // at the node global splat indexes.
         for (let i = 0; i < this.scenes.length; i++) {
-            this.requestSplatNodeLoad(i, 0, 0, 0, 0);
+            this.requestSplatNodeLoad(i, this.scenes[i].subtree.rootNode);
         }
 
         this.updateTransforms();
@@ -232,7 +233,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
      */
     pushSplatScene(virtualSplatBuffer, sceneOptions) {
         if (this.scenes.length >= Constants.MaxScenes) {
-            console.error(`DynamicSplatMesh::pushSplatScene() -> at most ${Constants.MaxScenes} scenes are supported`);
+            console.error(`DynamicSplatMesh::pushSplatScene: at most ${Constants.MaxScenes} scenes are supported`);
             return null;
         }
         const options = sceneOptions || {};
@@ -242,66 +243,20 @@ export class DynamicSplatMesh extends THREE.Mesh {
         const position = new THREE.Vector3().fromArray(positionArray);
         const rotation = new THREE.Quaternion().fromArray(rotationArray);
         const scale = new THREE.Vector3().fromArray(scaleArray);
-        const scene = new SplatScene(virtualSplatBuffer.splatBuffer, position, rotation, scale,
+        const scene = new SplatScene(virtualSplatBuffer, position, rotation, scale,
             options.splatAlphaRemovalThreshold || 1, options.opacity, options.visible);
-        scene.virtualSplatBuffer = virtualSplatBuffer;
         const parent = options.parent ?? this;
         parent.add(scene);
         this.scenes.push(scene);
         this.sceneOptions.push(options);
 
-        //
-        // TODO: Load only the root subtree
-        //  -subtrees should have pointers to all other child subtrees as well (for 3D tile conformance)
-        //  -The loading of new subtrees will be driven by checking the requested level
-        //
-        const rootSubtreeData = virtualSplatBuffer.getSplatSubtreeData(0, 0, 0, 0);
-        const subtree = new SplatSubTree(this.baseSplatTree.maxDepth, this.baseSplatTree.maxCentersPerNode);
+        // Get root subtree:
+        const subtree = virtualSplatBuffer.getSplatSubtree(0, 0, 0, 0);
         subtree.splatMesh = this;
-        if (rootSubtreeData) {
-            subtree.sceneMin.copy(rootSubtreeData.min);
-            subtree.sceneMax.copy(rootSubtreeData.max);
-            const rootNodeData = rootSubtreeData.nodes[0];
-            const rootNode = new SplatTreeNode(rootNodeData.min, rootNodeData.max, 0, 0);
-            rootNode.numSplats = rootNodeData.splatCount;
-            rootNode.tileCoords = { level: 0, x: 0, y: 0, z: 0 };
-            rootNode.resident = false;
-            subtree.rootNode = rootNode;
-        }
         scene.subtree = subtree;
         this.baseSplatTree.subTrees.push(subtree);
 
         return scene;
-    }
-
-    /**
-     * Loading
-     */
-    static getResidentNodeKey(sceneIndex, level, x, y, z) {
-        return `${sceneIndex}:${VirtualSplatBuffer.getNodeKey(level, x, y, z)}`;
-    }
-
-    /**
-     * Queues a node to be loaded on the next onBeforeRender(). The CPU side work (decoding and packing the node data)
-     * is done right away, so only the allocation and the GPU upload happen during rendering.
-     * @param {number} sceneIndex
-     * @param {number} level
-     * @param {number} x
-     * @param {number} y
-     * @param {number} z
-     */
-    requestSplatNodeLoad(sceneIndex, level, x, y, z) {
-        const key = DynamicSplatMesh.getResidentNodeKey(sceneIndex, level, x, y, z);
-        if (this.residentNodes.has(key)) return;
-        for (const pending of this.pendingNodeLoads) {
-            if (DynamicSplatMesh.getResidentNodeKey(pending.sceneIndex, pending.level, pending.x, pending.y, pending.z) === key) return;
-        }
-
-        // Pack now (VirtualSplatBuffer caches the packed data until loadSplatNode() releases it)
-        const scene = this.scenes[sceneIndex];
-        scene.virtualSplatBuffer.getSplatNodeData(level, x, y, z, this.splatAllocator.getSplatDataFormat(), scene.minimumAlpha);
-
-        this.pendingNodeLoads.push({ sceneIndex, level, x, y, z });
     }
 
     /**
@@ -311,6 +266,17 @@ export class DynamicSplatMesh extends THREE.Mesh {
         if (this.pendingNodeLoads.length === 0) return;
         this.renderer = renderer;
         this.flushPendingNodeLoads();
+    }
+
+    /**
+     * Queues a node to be loaded on the next onBeforeRender(). The CPU side work (decoding and packing the node data)
+     * is done right away, so only the allocation and the GPU upload happen during rendering.
+     * @param {number} sceneId
+     * @param {SplatTreeNode} node
+     */
+    requestSplatNodeLoad(sceneId,  node) {
+        //TODO: limit the number of valid requests. Validate them and maybe batch
+        this.pendingNodeLoads.push({ sceneId, node });
     }
 
     /**
@@ -334,7 +300,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.pendingNodeLoads = [];
         let loadedCount = 0;
         for (const pending of pendingNodeLoads) {
-            if (this.loadSplatNode(pending.sceneIndex, pending.level, pending.x, pending.y, pending.z, true)) loadedCount++;
+            if (this.loadSplatNode(pending.sceneId, pending.node, true)) loadedCount++;
         }
 
         if (loadedCount > 0 && this.onNodesLoadedCallback) this.onNodesLoadedCallback(this);
@@ -344,96 +310,82 @@ export class DynamicSplatMesh extends THREE.Mesh {
      * Fetches the packed data of a node, allocates GPU memory for it, writes it into the staging buffer and submits it.
      * Requires the GPU data textures to be setup.
      * @param {number} sceneIndex
-     * @param {number} level
-     * @param {number} x
-     * @param {number} y
-     * @param {number} z
+     * @param {SplatTreeNode} node
      * @param {boolean} releaseNodeData drop the CPU copy of the packed node data after the upload
-     * @return {Object | null} the resident node record, or null if the node does not exist or memory ran out
+     * @return {boolean} true when a node was successfully loaded
      */
-    loadSplatNode(sceneIndex, level, x, y, z, releaseNodeData = true) {
+    loadSplatNode(sceneIndex, node, releaseNodeData = true) {
         if (!this.splatAllocatorReady) {
             console.error('DynamicSplatMesh::loadSplatNode(): GPU data textures are not ready, use requestSplatNodeLoad() instead');
-            return null;
+            return false;
         }
-        const key = DynamicSplatMesh.getResidentNodeKey(sceneIndex, level, x, y, z);
-        const existing = this.residentNodes.get(key);
-        if (existing) return existing;
-
-        const scene = this.scenes[sceneIndex];
-        const virtualSplatBuffer = scene.virtualSplatBuffer;
 
         const loadStart = performance.now();
-        const nodeData = virtualSplatBuffer.getSplatNodeData(level, x, y, z, this.splatAllocator.getSplatDataFormat(), scene.minimumAlpha);
+        const virtualSplatBuffer = this.scenes[sceneIndex].splatBuffer;
 
-        if (!nodeData) return null;
+        //
+        // TODO:
+        //  -[] Define the node keys during the subtree loading process (KSplatTreeBuffer:deserializeOctree)
+        //  -[x] Define a way for the Viewer to identify that it needs to load a node
+        //  --[] Make the viewer call requestSplatNodeLoad().
+        //  -[x] Make the GPUSplatAllocator accept the SplatNodeAllocation when freeing the alloc
+        //
+        //
+
+
+        const nodeData = virtualSplatBuffer.getSplatNodeData( /* get node: level, x, y, z */  , scene.minimumAlpha);
+        if (!nodeData) return false;
 
         const packTime = performance.now() - loadStart;
 
         const stagingBuffer = this.splatAllocator.allocate(nodeData.splatCount);
         if (!stagingBuffer) {
             console.error(`DynamicSplatMesh: out of GPU splat memory while loading node ${key} (${nodeData.splatCount} splats)`);
-            return null;
+            return false;
         }
         stagingBuffer.writeNodeData(nodeData, sceneIndex);
-        stagingBuffer.submit();
+        const allocation = stagingBuffer.submit(); //TODO: INVALIDATE AND Return allocation object that we can free
 
         // Send the splat centers of this node to the sort worker, stored at the node global splat indexes.
         // If releaseNodeData is true (default) This centers buffer is transferred (not copied) to the worker
         const centers = releaseNodeData ? nodeData.centers : nodeData.centers.slice();
         this.submitNodeDataForDistancesComputation(stagingBuffer.splatOffset, nodeData.splatCount, centers, sceneIndex);
 
-        if (releaseNodeData) virtualSplatBuffer.releaseSplatNodeData(level, x, y, z);
+        if (releaseNodeData) virtualSplatBuffer.releaseSplatNodeData( /* get node: level, x, y, z */ );
 
-        //
-        // TODO: Setup for loadin any node, not just the root !
-        //
-        const node = (level === 0 && scene.subtree.rootNode) ? scene.subtree.rootNode : null;
-        if (node) {
-            node.resident = true;
-            node.splatOffset = stagingBuffer.splatOffset;
+        node.allocation = allocation;
 
-            // The Viewer (gatherSceneNodesForSort) reads the global splat indexes of a node from here
-            // TODO: DONT ALLOCATE A NEW Array EVERY TIME. USE THE ONE WE BOUND TO THE GEOMETRY !!!
-            const indexes = new Uint32Array(nodeData.splatCount);
-            for (let i = 0; i < nodeData.splatCount; i++) indexes[i] = stagingBuffer.splatOffset + i;
-            node.data = { 'indexes': indexes };
-        }
+        // The Viewer (gatherSceneNodesForSort) reads the global splat indexes of a node from here
+        // TODO: DONT ALLOCATE A NEW Array EVERY TIME. USE THE ONE WE BOUND TO THE GEOMETRY !!!
+        const indexes = new Uint32Array(nodeData.splatCount);
+        for (let i = 0; i < nodeData.splatCount; i++) indexes[i] = stagingBuffer.splatOffset + i;
+        node.data = { 'indexes': indexes }; //TODO: THE NODE DOESNT EVEN NEED TO HOLD THE INDEXES LIKE THIS !!! (just the range)
 
-        const record = {
-            sceneIndex, level, x, y, z,
-            node,
-            stagingBuffer,
-            splatOffset: stagingBuffer.splatOffset,
-            splatCount: nodeData.splatCount
-        };
-        this.residentNodes.set(key, record);
 
         if (this.logLevel >= LogLevel.Info) {
             console.log(`DynamicSplatMesh: loaded node ${key}: ${nodeData.splatCount} splats at offset ` +
                 `${stagingBuffer.splatOffset} (pack ${packTime.toFixed(1)} ms, ` +
                 `pack + upload ${(performance.now() - loadStart).toFixed(1)} ms)`);
         }
-        return record;
+
+        return true;
     }
 
     /**
      * Frees the GPU memory of a resident node. The caller must make sure the node's splats are no longer part of the
      * render index list.
+     *
+     * TODO: The unloading of nodes should not be done this way. Each node will keep an allocation ref and have a free() method
      */
-    unloadSplatNode(sceneIndex, level, x, y, z) {
-        const key = DynamicSplatMesh.getResidentNodeKey(sceneIndex, level, x, y, z);
-        const record = this.residentNodes.get(key);
-        if (!record) return;
-        this.splatAllocator.free(record.stagingBuffer);
-        if (record.node) {
-            record.node.resident = false;
-            record.node.splatOffset = undefined;
-            record.node.data = null;
-        }
-        this.residentNodes.delete(key);
-        //TODO: The sort worker keeps the stale centers of the freed range. That is fine as long as the freed indexes
+    unloadSplatNode(node) {
+        this.splatAllocator.free(node.allocation);
+        node.allocation.splatOffset = -1;
+        node.allocation.textureAllocations = null;
+
+        //
+        // The sort worker keeps the stale centers of the freed range. That is fine as long as the freed indexes
         // are never part of the indexes to sort, they are overwritten when the range is allocated again.
+        //
     }
 
     /**
@@ -643,7 +595,6 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.scenes.forEach((scene) => scene.removeFromParent());
         this.scenes = [];
         this.sceneOptions = [];
-        this.residentNodes.clear();
         this.pendingNodeLoads = [];
         this.splatAllocatorReady = false;
         this.onNodesLoadedCallback = null;
