@@ -52,9 +52,6 @@ export class KSplatTreeBuffer {
         const nodeCount = nodes.length;
         const bytesPerInt = 4;
 
-        console.log("Serializing", nodeCount)
-
-
         // 1 Int (total node count) + 6 Floats (BBox) + (12 Ints for each node: 4 for offsets, 8 for child ids)
         const headerElementCount = 1 + 6 + (nodeCount * 12);
         const headerByteLength = headerElementCount * bytesPerInt;
@@ -64,7 +61,6 @@ export class KSplatTreeBuffer {
             const indexArray = node.data && node.data.indexes ? node.data.indexes : [];
             totalDataElements += indexArray.length;
         }
-        console.log("Tree buffer length:", totalDataElements);
         const totalByteLength = headerByteLength + (totalDataElements * bytesPerInt);
 
         const fileBuffer = new ArrayBuffer(totalByteLength);
@@ -232,6 +228,18 @@ export class KSplatTreeBuffer {
                 childNode.sampled = true;
                 childNode.startLocalId = dataOffsets.start;
                 childNode.endLocalId = dataOffsets.end;
+                if (streamMode === StreamingMode.Tiles) {
+                    const {x, y, z} = node.key;
+                    // Child positions computed from bounds so it doesnt depend on the order of the children
+                    const cx = childNode.center.x > node.center.x ? 1 : 0;
+                    const cy = childNode.center.z > node.center.z ? 1 : 0;
+                    const cz = childNode.center.y > node.center.y ? 1 : 0;
+                    childNode.key = {
+                        x: 2 * x + cx,
+                        y: 2 * y + cy,
+                        z: 2 * z + cz,
+                    };
+                }
                 node.children.push(childNode);
             }
         };
