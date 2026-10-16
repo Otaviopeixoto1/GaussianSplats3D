@@ -6,11 +6,12 @@ import { KSplatTreeBuffer } from "../loaders/ksplat/KSplatTreeLoader.js";
 import { KSplatHeader } from "../loaders/SplatBuffer.js";
 import { StatsCollector } from '../../util/StatsCollector.js';
 import {DEFAULT_NODE_ALLOCATION} from "../LOD/GPUSplatAllocator.js";
+import {StreamingMode} from "../loaders/StreamingMode.js";
 
 export class SplatTreeNode {
 
     //TODO: When dynamically creating nodes, keep old ones for recycling
-    constructor(min, max, level, id, allocation = DEFAULT_NODE_ALLOCATION) {
+    constructor(min, max, level, id, streamMode = StreamingMode.Static) {
         //TODO: remove redundant min and max values
         this.min = new THREE.Vector3().copy(min);
         this.max = new THREE.Vector3().copy(max);
@@ -33,7 +34,16 @@ export class SplatTreeNode {
         /**
          * @member {SplatNodeAllocation} allocation The current allocation of the node. Null when not allocated
          */
-        this.allocation = allocation;
+        if (streamMode === StreamingMode.Tiles) {
+            this.allocation = {
+                pending: false,
+                resident: false,
+                offset: -1,
+                textureAllocations: null,
+            }
+        } else {
+            this.allocation = DEFAULT_NODE_ALLOCATION
+        }
     }
 }
 

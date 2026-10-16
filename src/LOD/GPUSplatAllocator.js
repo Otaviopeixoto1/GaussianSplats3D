@@ -20,17 +20,19 @@ import {SplatDataPacking} from "./SplatDataPacking.js";
 /**
  *
  * @typedef {Object} SplatNodeAllocation
- * @property {boolean} static false when the viewer must request for allocations
+ * @property {boolean} pending true when the allocation is in process
+ * @property {boolean} resident false when the viewer must request for allocations
  * @property {number} offset base offset of the splat indexes form an allocation
  * @property {Record<string, PagedTextureAllocation> | null} textureAllocations
  *
  */
 
 /**
- * The default allocation type of SplatMesh.
+ * The default allocation type of SplatMesh. (static preallocated nodes)
  */
 export const DEFAULT_NODE_ALLOCATION = {
-    static: true,
+    pending: false,
+    resident: true,
     offset: -1,
     textureAllocations: null,
 }
@@ -247,11 +249,12 @@ export class SplatStagingBuffer {
         this.sceneIndexesBuffer.fill(sceneIndex, 0, count);
     }
 
-    // Finishes all changes and upload them to the GPU
+    //
     /**
-     * @return {SplatNodeAllocation}
+     * Finishes all changes and upload them to the GPU and writes data into the given allocation object
+     * @param {SplatNodeAllocation} outAllocation
      */
-    submit() {
+    submit(outAllocation) {
         this.allocator.submitSplatAllocation("centerColors", this.centerColorsAllocation);
 
         // 3D vs 2D:
@@ -267,16 +270,15 @@ export class SplatStagingBuffer {
 
         this.allocator.submitSplatAllocation("sceneIndexes", this.sceneIndexesAllocation);
 
-        return {
-            static: false,
-            offset: this.splatOffset,
-            textureAllocations: {
-                'centerColors': this.centerColorsAllocation,
-                'covariances': this.covariancesAllocation,
-                'scaleRotations': this.scaleRotationsAllocation,
-                'sphericalHarmonics': this.sphericalHarmonicsAllocation,
-                'sceneIndexes': this.sceneIndexesAllocation,
-            }
+        outAllocation.pending = false;
+        outAllocation.resident = true;
+        outAllocation.offset = this.splatOffset;
+        outAllocation.textureAllocations = {
+            'centerColors': this.centerColorsAllocation,
+            'covariances': this.covariancesAllocation,
+            'scaleRotations': this.scaleRotationsAllocation,
+            'sphericalHarmonics': this.sphericalHarmonicsAllocation,
+            'sceneIndexes': this.sceneIndexesAllocation,
         };
     }
 }

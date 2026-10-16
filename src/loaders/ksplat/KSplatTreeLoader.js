@@ -6,7 +6,6 @@ import * as THREE from "three";
 import {SplatTreeNode, SplatSubTree} from "../../splattree/SplatTree.js";
 import {ITiledSplatFileLoader} from '../TiledSplatFileLoader.js'
 import {SplatDataPacking} from "../../LOD/SplatDataPacking.js";
-import {DEFAULT_NODE_ALLOCATION} from "../../LOD/GPUSplatAllocator.js";
 import {StreamingMode} from "../StreamingMode.js";
 
 
@@ -162,16 +161,6 @@ export class KSplatTreeBuffer {
             nodeIdToChildrenIds.push(childIds);
         }
 
-        let allocation;
-        if (streamMode === StreamingMode.Tiles) {
-            allocation = {
-                static: false,
-                offset: -1,
-                textureAllocations: null,
-            }
-        } else {
-            allocation = DEFAULT_NODE_ALLOCATION
-        }
 
         const processSplatTreeNode = function(node) {
             const nodeDimensions = [node.max.x - node.min.x,
@@ -218,7 +207,12 @@ export class KSplatTreeBuffer {
                     continue;
                 }
 
-                const childNode = new SplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.level + 1, childId, allocation);
+                const childNode = new SplatTreeNode(
+                    childrenBounds[i].min,
+                    childrenBounds[i].max,
+                    node.level + 1, childId,
+                    streamMode
+                );
                 const dataOffsets = nodeDataOffsets[0];
                 //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
                 childNode.data = {
@@ -246,7 +240,7 @@ export class KSplatTreeBuffer {
 
         const treeRootOffsets = nodeDataOffsets[0];
         const treeRootData = nodeDataList[0];
-        const treeRoot = new SplatTreeNode(treeMin, treeMax, 0, 0, allocation);
+        const treeRoot = new SplatTreeNode(treeMin, treeMax, 0, 0, streamMode);
         //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
         treeRoot.data = {
             'indexes': treeRootData

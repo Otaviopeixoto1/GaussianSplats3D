@@ -2440,12 +2440,12 @@ export class Viewer {
             let dd = dx * dx + dy * dy + dz * dz;
             let distanceToNode = Math.sqrt(dd);
 
-
-            if (!node.allocation.static && node.allocation.textureAllocations === null) {
-                //TODO:
-                // If the node is from a DynamicMesh it needs to be treated different ! We MUST load it
-                // call SplatMesh.requestSplatNodeLoad ...
-                continue; // DONT RENDER NODE THAT IS NOT ALLOCATED
+            if (!node.allocation.resident) {
+                if (!node.allocation.pending && level <= 1) {
+                    //TODO: Limit number of requests per frame
+                    this.splatMesh.requestSplatNodeLoad(element.subTreeId, node);
+                }
+                continue;
             }
 
 
