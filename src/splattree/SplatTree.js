@@ -9,13 +9,14 @@ import {DEFAULT_NODE_ALLOCATION} from "../LOD/GPUSplatAllocator.js";
 
 export class SplatTreeNode {
 
-    constructor(min, max, depth, id, allocation = DEFAULT_NODE_ALLOCATION) {
+    //TODO: When dynamically creating nodes, keep old ones for recycling
+    constructor(min, max, level, id, allocation = DEFAULT_NODE_ALLOCATION) {
         //TODO: remove redundant min and max values
         this.min = new THREE.Vector3().copy(min);
         this.max = new THREE.Vector3().copy(max);
         this.boundingBox = new THREE.Box3(this.min, this.max);
         this.center = new THREE.Vector3().copy(this.max).sub(this.min).multiplyScalar(0.5).add(this.min);
-        this.depth = depth;
+        this.level = level;
         this.children = [];
         this.data = null;
         this.numSplats = 0;
@@ -23,9 +24,11 @@ export class SplatTreeNode {
         this.sampled = false;
 
         // For dynamic mode:
-        //TODO: key and allocation so that the node can have all
-        // TODO: DEFINE A NODE ALLOCATION STATUS TO SEE IF NODE IS IN MEMORY OR NOT
-        this.key = null; //The key that will be used for indexing node memory (3D tiles: level, x, y, z)
+        /**
+         * @member {Object | null} key The current key of the node. Null in StreamingMode.Static,
+         *                             {level, x, y, z} whem in StreamingMode.3DTiles
+         */
+        this.key = null; //The key that will be used for indexing node memory (3D tiles: x, y, z)
 
         /**
          * @member {SplatNodeAllocation} allocation The current allocation of the node. Null when not allocated

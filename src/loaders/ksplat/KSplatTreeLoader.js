@@ -7,6 +7,9 @@ import {SplatTreeNode, SplatSubTree} from "../../splattree/SplatTree.js";
 import {ITiledSplatFileLoader} from '../TiledSplatFileLoader.js'
 import {SplatDataPacking} from "../../LOD/SplatDataPacking.js";
 import {DEFAULT_NODE_ALLOCATION} from "../../LOD/GPUSplatAllocator.js";
+import {StreamingMode} from "../StreamingMode.js";
+
+
 
 export class KSplatTreeBuffer {
     constructor(splatBuffer, subTree) {
@@ -115,9 +118,9 @@ export class KSplatTreeBuffer {
     /**
      * @param {ArrayBuffer} fileBuffer
      * @param {number} offset
-     * @param {SplatNodeAllocation} allocation The allocation of the node. Defaults to static allocation (the application will assume all nodes are pre-allocated)
+     * @param {number=} streamMode //The streaming mode of the octree nodes. Defaults to Static
      */
-    static deserializeOctreeBuffer(fileBuffer, offset, allocation= DEFAULT_NODE_ALLOCATION) {
+    static deserializeOctreeBuffer(fileBuffer, offset, streamMode = StreamingMode.Static) {
         const view = new DataView(fileBuffer, offset);
         let byteOffset = 0;
 
@@ -161,6 +164,17 @@ export class KSplatTreeBuffer {
             const nodeData = Array.from(new Int32Array(fileBuffer, dataByteOffset, elementLength));
             nodeDataList.push(nodeData);
             nodeIdToChildrenIds.push(childIds);
+        }
+
+        let allocation;
+        if (streamMode === StreamingMode.Tiles) {
+            allocation = {
+                static: false,
+                offset: -1,
+                textureAllocations: null,
+            }
+        } else {
+            allocation = DEFAULT_NODE_ALLOCATION
         }
 
         const processSplatTreeNode = function(node) {
@@ -208,7 +222,7 @@ export class KSplatTreeBuffer {
                     continue;
                 }
 
-                const childNode = new SplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.depth + 1, childId, allocation);
+                const childNode = new SplatTreeNode(childrenBounds[i].min, childrenBounds[i].max, node.level + 1, childId, allocation);
                 const dataOffsets = nodeDataOffsets[0];
                 //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
                 childNode.data = {
@@ -233,6 +247,13 @@ export class KSplatTreeBuffer {
         treeRoot.sampled = true;
         treeRoot.startLocalId = treeRootOffsets.start;
         treeRoot.endLocalId = treeRootOffsets.end;
+        if (streamMode === StreamingMode.Tiles) {
+            treeRoot.key = {
+                x: 0,
+                y: 0,
+                z: 0,
+            }
+        }
 
         const queue = [treeRoot];
         while (queue.length > 0) {
@@ -427,10 +448,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(
             splatBuffer.bufferData,
             offset,
-            {
-                static: false,
-                textureAllocations: null
-            }
+            StreamingMode.Tiles
         );
         const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
         subtree.sceneMin = subTreeRoot.min;

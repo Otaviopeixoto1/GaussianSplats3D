@@ -2349,7 +2349,7 @@ export class Viewer {
             // -> We must test for fully in frustum or just partially intersecting (do test but count nodes inside          )
             let insideFrustum = frustum.intersectsBox(box);
             let maxLevel = Infinity; //pointcloud.maxLevel || Infinity;
-            let level = node.depth;
+            let level = node.level;
 
             const numPointsOnNode = node.numSplats;
 
@@ -2441,9 +2441,12 @@ export class Viewer {
             let distanceToNode = Math.sqrt(dd);
 
 
-            //TODO:
-            // If the node is from a DynamicMesh it needs to be treated different ! We can load it
-            // call SplatMesh.requestSplatNodeLoad ...
+            if (!node.allocation.static && node.allocation.textureAllocations === null) {
+                //TODO:
+                // If the node is from a DynamicMesh it needs to be treated different ! We MUST load it
+                // call SplatMesh.requestSplatNodeLoad ...
+                continue; // DONT RENDER NODE THAT IS NOT ALLOCATED
+            }
 
 
             if (node.data && node.data.indexes) {
