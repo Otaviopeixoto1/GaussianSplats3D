@@ -33,12 +33,12 @@ const outputDirectory = process.argv[3];
 const fileData = new Uint8Array(fs.readFileSync(inputFile));
 KSplatTreeLoader.checkVersion(fileData.buffer);
 const splatBuffer = new SplatBuffer(fileData.buffer);
-const subTree = KSplatTreeLoader.loadTree(splatBuffer);
+const subTree = await KSplatTreeLoader.loadTree(splatBuffer.header, fileData.buffer);
 
 // TEMPORARY. TODO: FIX Splat load count mismatch 
 // During rendering we ignore the splat counts stored in the file and always uses the max counts (see KSplatHeader.constructFromBuffer),
 // but SplatTransform reads the stored counts, which can be out of date. We modify here the splat count SplatTransform reads the same 
-// splats as the renderer. Done after loadTree() because KSplatHeader.calculateTotalSplatBufferSize() uses the stored header count to find the tree.
+// splats as the renderer.
 const sections = splatBuffer.header.sections;
 const headerCounts = new Uint32Array(fileData.buffer, 0, 5);
 headerCounts[2] = sections.length;

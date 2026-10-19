@@ -164,14 +164,14 @@ export class KSplatTreeBuffer {
 
         const processSplatTreeNode = function(node) {
             const nodeDimensions = [node.max.x - node.min.x,
-                node.max.y - node.min.y,
-                node.max.z - node.min.z];
+            node.max.y - node.min.y,
+            node.max.z - node.min.z];
             const halfDimensions = [nodeDimensions[0] * 0.5,
-                nodeDimensions[1] * 0.5,
-                nodeDimensions[2] * 0.5];
+            nodeDimensions[1] * 0.5,
+            nodeDimensions[2] * 0.5];
             const nodeCenter = [node.min.x + halfDimensions[0],
-                node.min.y + halfDimensions[1],
-                node.min.z + halfDimensions[2]];
+            node.min.y + halfDimensions[1],
+            node.min.z + halfDimensions[2]];
 
             const childrenBounds = [
                 // top section, clockwise from upper-left (looking from above, +Y)
@@ -304,7 +304,11 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         //KSplatTreeLoader.loadHeader(url)
 
         //TODO: Break it into smaller subtrees
-        this.splatSubTree = KSplatTreeLoader.loadTree(splatBuffer);
+        this.splatSubTree = null;
+        this.splatSubTreePromise = KSplatTreeLoader.loadTree(splatBuffer.header, splatBuffer.bufferData).then((subTree) => {
+            this.splatSubTree = subTree;
+            return subTree;
+        });
 
         // A map for converting from the linearized 3D tile indexes (x + 2 * y + 4 * z) into the
         // indexing scheme of the node's children (see deserializeOctreeBuffer() above for how the children bounds are ordered)
@@ -376,7 +380,15 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         return { from: nodeIndexes[0], to: nodeIndexes[nodeIndexes.length - 1], count: nodeIndexes.length };
     }
 
+    async waitSubtree() {
+        if (this.splatSubTreePromise !== null) {
+            await this.splatSubTreePromise;
+            this.splatSubTreePromise = null;
+        }
+    }
+
     async loadNode(level, x, y, z, format) {
+        await this.waitSubtree();
         const nodeRange = this.getNodeSplatRange(level, x, y, z);
         if (!nodeRange) {
             return null;
@@ -405,6 +417,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
             return null
         }
 
+        await this.waitSubtree();
         return this.splatSubTree;
     }
 
@@ -441,15 +454,30 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
     }
 
     /**
-     * @param {SplatBuffer} splatBuffer
-     * @return {SplatSubTree}
+     * Loads the tree of a .kstree file. The tree is stored right after the splat data, so its offset is given by the header.
+     * @param {KSplatHeader} header Header of the .kstree file (see loadHeader())
+     * @param {string | ArrayBuffer} source URL of the .kstree file (only the tree part is fetched),
+     *                                      or the full file data when it is already loaded
+     * @return {Promise<SplatSubTree | null>}
      */
-    // TODO: load from url. Only load the tree portion
-    static loadTree(splatBuffer) {
-        const offset = KSplatHeader.calculateTotalSplatBufferSize(splatBuffer);
+    static async loadTree(header, source) {
+        const offset = header.getTotalSplatBufferSize();
+
+        let treeBuffer = source;
+        let treeOffset = offset;
+        if (typeof source === 'string') {
+            // From the tree offset to the end of the file
+            treeBuffer = await ITiledSplatFileLoader.fetchBytes(source, offset);
+            treeOffset = 0;
+        }
+
+        if (!treeBuffer) {
+            return null;
+        }
+
         const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(
-            splatBuffer.bufferData,
-            offset,
+            treeBuffer,
+            treeOffset,
             StreamingMode.Tiles
         );
         const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
@@ -459,17 +487,17 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         return subtree;
     }
 
-   static checkVersion(buffer) {
+    static checkVersion(buffer) {
         const minVersionMajor = KSplatHeader.CurrentMajorVersion;
         const minVersionMinor = KSplatHeader.CurrentMinorVersion;
         const header = KSplatHeader.parseHeaderData(buffer);
         if (header.versionMajor === minVersionMajor &&
             header.versionMinor >= minVersionMinor ||
             header.versionMajor > minVersionMajor) {
-           return true;
+            return true;
         } else {
             throw new Error(`KSplat version not supported: v${header.versionMajor}.${header.versionMinor}. ` +
-                            `Minimum required: v${minVersionMajor}.${minVersionMinor}`);
+                `Minimum required: v${minVersionMajor}.${minVersionMinor}`);
         }
     };
 
@@ -540,14 +568,14 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
                     sectionHeadersLoaded = true;
                     sectionHeadersBuffer = new ArrayBuffer(header.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes);
                     new Uint8Array(sectionHeadersBuffer).set(new Uint8Array(bufferData, KSplatHeader.HeaderSizeBytes,
-                                                                            header.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes));
+                        header.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes));
                     sectionHeaders = KSplatHeader.parseSectionHeaders(header, sectionHeadersBuffer, 0, false);
                     let totalSectionStorageStorageByes = 0;
                     for (let i = 0; i < header.maxSectionCount; i++) {
                         totalSectionStorageStorageByes += sectionHeaders[i].storageSizeBytes;
                     }
                     const totalStorageSizeBytes = KSplatHeader.HeaderSizeBytes + header.maxSectionCount *
-                                                  KSplatHeader.SectionHeaderSizeBytes + totalSectionStorageStorageByes;
+                        KSplatHeader.SectionHeaderSizeBytes + totalSectionStorageStorageByes;
                     if (!directLoadBuffer) {
                         directLoadBuffer = new ArrayBuffer(totalStorageSizeBytes);
                         let offset = 0;
@@ -599,7 +627,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
                         for (let i = 0; i < header.maxSectionCount; i++) {
                             const sectionHeader = sectionHeaders[i];
                             const bucketsDataOffset = sectionBase + sectionHeader.partiallyFilledBucketCount * 4 +
-                                                    sectionHeader.bucketStorageSizeBytes * sectionHeader.bucketCount;
+                                sectionHeader.bucketStorageSizeBytes * sectionHeader.bucketCount;
                             const bytesRequiredToReachSectionSplatData = baseDataOffset + bucketsDataOffset;
                             if (numBytesProgressivelyLoaded >= bytesRequiredToReachSectionSplatData) {
                                 reachedSections++;
