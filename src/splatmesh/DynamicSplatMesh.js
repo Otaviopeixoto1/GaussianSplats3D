@@ -99,7 +99,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
         // Stores nodes whose data finished loading and that are waiting to be uploaded: { sceneIndex, node, nodeData }
         this.pendingNodeLoads = [];
         // Maximum number of nodes uploaded to the GPU in one onBeforeRender() call
-        this.maxNodeUploadsPerFrame = 8;
+        this.maxNodeUploadsPerFrame = 4;
 
         // True once GPUSplatAllocator.setup() has run with the renderer given to onBeforeRender()
         this.splatAllocatorReady = false;
@@ -183,8 +183,8 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
         //Validate. DynamicMesh only supports .kstree files, any other format cannot be loaded
         for(const options of sceneOptions) {
-            if (options.format !== SceneFormat.KSTree) {
-                console.error(`DynamicSplatMesh::build: Scene format: ${options.format}. DynamicSplatMesh ony works with .kstree format (${SceneFormat.KSTree})`)
+            if (options.format !== SceneFormat.KSTree && options.format !== SceneFormat.Tiles3D) {
+                console.error(`DynamicSplatMesh::build: Scene format: ${options.format}. DynamicSplatMesh ony works with .kstree and 3D tiles formats (${SceneFormat.KSTree}, ${SceneFormat.Tiles3D})`)
             }
         }
 

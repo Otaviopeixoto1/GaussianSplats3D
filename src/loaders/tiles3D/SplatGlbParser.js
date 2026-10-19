@@ -1,6 +1,6 @@
 
 // TODO: Run this on a worker
-function parseSplatGLB(arrayBuffer, format, minimumAlpha) {
+export function parseSplatGLB(arrayBuffer, format, minimumAlpha) {
     const SH_C0 = 0.28209479177387814;
     const SPLAT_RENDER_MODE_TWO_D = 1;
 

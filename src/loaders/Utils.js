@@ -6,5 +6,6 @@ export const sceneFormatFromPath = (path) => {
     else if (path.endsWith('.ksplat')) return SceneFormat.KSplat;
     else if (path.endsWith('.kstree')) return SceneFormat.KSTree;
     else if (path.endsWith('.spz')) return SceneFormat.Spz;
+    else if (path.endsWith('.json')) return SceneFormat.Tiles3D;
     return null;
 };

@@ -32,6 +32,7 @@ import { SplatRenderMode } from './SplatRenderMode.js';
 import {BinaryHeap} from "../util/binary-heap.js";
 import {SplatBuffer, VirtualSplatBuffer} from './loaders/SplatBuffer.js';
 import {DynamicSplatMesh} from './splatmesh/DynamicSplatMesh.js';
+import {Tiles3DLoader} from "./loaders/tiles3D/Tiles3DLoader.js";
 
 const THREE_CAMERA_FOV = 50;
 const MINIMUM_DISTANCE_TO_NEW_FOCAL_POINT = .75;
@@ -1196,6 +1197,9 @@ export class Viewer {
             } else if (format === SceneFormat.Spz) {
                 return SpzLoader.loadFromURL(path, onProgress, progressiveBuild, onSectionBuilt, splatAlphaRemovalThreshold, this.inMemoryCompressionLevel,
                     optimizeSplatData, this.sphericalHarmonicsDegree, headers);
+            } else if (format === SceneFormat.Tiles3D) {
+                console.log("LOADING 3D TILES !!!!")
+                return Tiles3DLoader.loadTilestFromURL(path, headers);
             }
         } catch (e) {
             throw this.updateError(e, null);

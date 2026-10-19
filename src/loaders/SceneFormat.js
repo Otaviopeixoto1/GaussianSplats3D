@@ -3,5 +3,6 @@ export const SceneFormat = {
     'KSplat': 1,
     'Ply': 2,
     'Spz': 3,
-    'KSTree': 4
+    'KSTree': 4,
+    'Tiles3D': 5
 };

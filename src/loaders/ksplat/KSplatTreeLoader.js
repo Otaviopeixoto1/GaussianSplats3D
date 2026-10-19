@@ -450,7 +450,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         );
 
         if (!headerBuffer) {
-            return {};
+            return null;
         }
 
         KSplatTreeLoader.checkVersion(headerBuffer);
