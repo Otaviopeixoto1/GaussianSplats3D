@@ -187,6 +187,7 @@ export class KSplatHeader {
         this.sceneCenter = new THREE.Vector3().copy(headerData.sceneCenter);
         this.minSphericalHarmonicsCoeff = headerData.minSphericalHarmonicsCoeff;
         this.maxSphericalHarmonicsCoeff = headerData.maxSphericalHarmonicsCoeff;
+        this.treeOffset = headerData.treeOffset;
 
         this.sections = sectionHeaders;
     }
@@ -235,6 +236,16 @@ export class KSplatHeader {
         const minSphericalHarmonicsCoeff = headerArrayFloat32[9] || -DefaultSphericalHarmonics8BitCompressionHalfRange;
         const maxSphericalHarmonicsCoeff = headerArrayFloat32[10] || DefaultSphericalHarmonics8BitCompressionHalfRange;
 
+        // .kstree only: byte offset of the tree. This is the calculation the existing .kstree files were written with:
+        // the splat count of the main header for every section and the SH degree read from the main header bytes.
+        // It matches getTotalSplatBufferSize() for uncompressed, SH degree 0, single section buffers.
+        let treeOffset = KSplatHeader.HeaderSizeBytes + maxSectionCount * KSplatHeader.SectionHeaderSizeBytes;
+        for (let i = 0; i < maxSectionCount; i++) {
+            const sphericalHarmonicsDegree = headerArrayUint16[i * KSplatHeader.SectionHeaderSizeBytes / 2 + 20] || 0;
+            if (sphericalHarmonicsDegree > 2) break;
+            treeOffset += KSplatHeader.calculateComponentStorage(compressionLevel, sphericalHarmonicsDegree).bytesPerSplat * splatCount;
+        }
+
         return {
             versionMajor,
             versionMinor,
@@ -245,7 +256,8 @@ export class KSplatHeader {
             compressionLevel,
             sceneCenter,
             minSphericalHarmonicsCoeff,
-            maxSphericalHarmonicsCoeff
+            maxSphericalHarmonicsCoeff,
+            treeOffset
         };
     }
 
@@ -395,6 +407,14 @@ export class KSplatHeader {
             size += this.sections[i].storageSizeBytes;
         }
         return size;
+    }
+
+    /**
+     * Byte offset of the tree in a .kstree file (see parseHeaderData()). Used to write and to read the tree.
+     * @return {number}
+     */
+    getTreeOffset() {
+        return this.treeOffset;
     }
 
     /**

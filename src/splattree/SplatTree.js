@@ -117,8 +117,8 @@ function createSplatTreeWorker(self) {
 
         containsPoint(point) {
             return point[0] >= this.min[0] && point[0] <= this.max[0] &&
-                   point[1] >= this.min[1] && point[1] <= this.max[1] &&
-                   point[2] >= this.min[2] && point[2] <= this.max[2];
+                point[1] >= this.min[1] && point[1] <= this.max[1] &&
+                point[2] >= this.min[2] && point[2] <= this.max[2];
         }
     }
 
@@ -144,8 +144,8 @@ function createSplatTreeWorker(self) {
             this.min = [min[0], min[1], min[2]];
             this.max = [max[0], max[1], max[2]];
             this.center = [(max[0] - min[0]) * 0.5 + min[0],
-                           (max[1] - min[1]) * 0.5 + min[1],
-                           (max[2] - min[2]) * 0.5 + min[2]];
+            (max[1] - min[1]) * 0.5 + min[1],
+            (max[2] - min[2]) * 0.5 + min[2]];
             this.depth = depth;
             this.children = [];
             this.data = null;
@@ -174,35 +174,35 @@ function createSplatTreeWorker(self) {
         }
 
         const nodeDimensions = [node.max[0] - node.min[0],
-                                node.max[1] - node.min[1],
-                                node.max[2] - node.min[2]];
+        node.max[1] - node.min[1],
+        node.max[2] - node.min[2]];
         const halfDimensions = [nodeDimensions[0] * 0.5,
-                                nodeDimensions[1] * 0.5,
-                                nodeDimensions[2] * 0.5];
+        nodeDimensions[1] * 0.5,
+        nodeDimensions[2] * 0.5];
         const nodeCenter = [node.min[0] + halfDimensions[0],
-                            node.min[1] + halfDimensions[1],
-                            node.min[2] + halfDimensions[2]];
+        node.min[1] + halfDimensions[1],
+        node.min[2] + halfDimensions[2]];
 
         const childrenBounds = [
             // top section, clockwise from upper-left (looking from above, +Y)
             new WorkerBox3([nodeCenter[0] - halfDimensions[0], nodeCenter[1], nodeCenter[2] - halfDimensions[2]],
-                           [nodeCenter[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2]]),
+                [nodeCenter[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2]]),
             new WorkerBox3([nodeCenter[0], nodeCenter[1], nodeCenter[2] - halfDimensions[2]],
-                           [nodeCenter[0] + halfDimensions[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2]]),
+                [nodeCenter[0] + halfDimensions[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2]]),
             new WorkerBox3([nodeCenter[0], nodeCenter[1], nodeCenter[2]],
-                           [nodeCenter[0] + halfDimensions[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2] + halfDimensions[2]]),
+                [nodeCenter[0] + halfDimensions[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2] + halfDimensions[2]]),
             new WorkerBox3([nodeCenter[0] - halfDimensions[0], nodeCenter[1], nodeCenter[2]],
-                           [nodeCenter[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2] + halfDimensions[2]]),
+                [nodeCenter[0], nodeCenter[1] + halfDimensions[1], nodeCenter[2] + halfDimensions[2]]),
 
             // bottom section, clockwise from lower-left (looking from above, +Y)
             new WorkerBox3([nodeCenter[0] - halfDimensions[0], nodeCenter[1] - halfDimensions[1], nodeCenter[2] - halfDimensions[2]],
-                           [nodeCenter[0], nodeCenter[1], nodeCenter[2]]),
+                [nodeCenter[0], nodeCenter[1], nodeCenter[2]]),
             new WorkerBox3([nodeCenter[0], nodeCenter[1] - halfDimensions[1], nodeCenter[2] - halfDimensions[2]],
-                           [nodeCenter[0] + halfDimensions[0], nodeCenter[1], nodeCenter[2]]),
+                [nodeCenter[0] + halfDimensions[0], nodeCenter[1], nodeCenter[2]]),
             new WorkerBox3([nodeCenter[0], nodeCenter[1] - halfDimensions[1], nodeCenter[2]],
-                           [nodeCenter[0] + halfDimensions[0], nodeCenter[1], nodeCenter[2] + halfDimensions[2]]),
+                [nodeCenter[0] + halfDimensions[0], nodeCenter[1], nodeCenter[2] + halfDimensions[2]]),
             new WorkerBox3([nodeCenter[0] - halfDimensions[0], nodeCenter[1] - halfDimensions[1], nodeCenter[2]],
-                           [nodeCenter[0], nodeCenter[1], nodeCenter[2] + halfDimensions[2]]),
+                [nodeCenter[0], nodeCenter[1], nodeCenter[2] + halfDimensions[2]]),
         ];
 
         /**
@@ -661,11 +661,14 @@ export class SplatTree {
 
                         if (sceneOptions.format === SceneFormat.KSTree) {
                             // .kstree files already have the octree stored in them
-                            const offset = KSplatHeader.calculateTotalSplatBufferSize(scene.splatBuffer);
+                            const offset = scene.splatBuffer.header.getTreeOffset();
                             const subTreeRoot = KSplatTreeBuffer.deserializeOctreeBuffer(scene.splatBuffer.bufferData, offset);
                             const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
-                            subtree.sceneMin = subTreeRoot.min;
-                            subtree.sceneMax = subTreeRoot.max;
+                            // Invalid tree: empty subtree (rootNode null), the scene is not rendered
+                            if (subTreeRoot) {
+                                subtree.sceneMin = subTreeRoot.min;
+                                subtree.sceneMax = subTreeRoot.max;
+                            }
                             subtree.rootNode = subTreeRoot;
                             subtree.splatMesh = splatMesh;
                             this.subTrees.push(subtree);
@@ -819,5 +822,4 @@ export class SplatTree {
     static rebuild() {
 
     }
-
 }

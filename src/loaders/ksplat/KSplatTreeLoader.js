@@ -15,15 +15,20 @@ export class KSplatTreeBuffer {
         const ksplatBuffer = splatBuffer.bufferData;
         const treeBuffer = KSplatTreeBuffer.serializeOctreeToBuffer(subTree);
 
-        const splatBufferByteLength = KSplatHeader.calculateTotalSplatBufferSize(splatBuffer);
+        const splatBufferByteLength = splatBuffer.header.getTreeOffset();
         console.log("TREE STORE OFFSET", splatBufferByteLength)
+        if (splatBufferByteLength < splatBuffer.header.getTotalSplatBufferSize()) {
+            console.error('KSplatTreeBuffer: the tree offset is inside the splat data (compressed, spherical harmonics or ' +
+                'multiple sections are not supported by .kstree yet), the last splats are overwritten by the tree');
+        }
 
         const totalByteLength = splatBufferByteLength + treeBuffer.byteLength;
 
         this.bufferData = new ArrayBuffer(totalByteLength);
         const finalView = new Uint8Array(this.bufferData);
 
-        const view1 = new Uint8Array(ksplatBuffer);
+        // Only the splat data part (the source buffer can already contain a tree)
+        const view1 = new Uint8Array(ksplatBuffer, 0, Math.min(ksplatBuffer.byteLength, splatBufferByteLength));
         const view2 = new Uint8Array(treeBuffer);
 
         // Copy the splats to the start of the buffer and the tree to the end
@@ -122,6 +127,13 @@ export class KSplatTreeBuffer {
         const nodeCount = view.getInt32(byteOffset, true);
         byteOffset += 4;
 
+        // Validate before allocating anything
+        const nodeRecordsEnd = 4 + 24 + nodeCount * 48;
+        if (!(nodeCount > 0) || nodeRecordsEnd > view.byteLength) {
+            console.error(`KSplatTreeBuffer::deserializeOctreeBuffer: invalid tree data (node count ${nodeCount}), wrong tree offset ?`);
+            return null;
+        }
+
         const treeMin = new THREE.Vector3(
             view.getFloat32(byteOffset, true),
             view.getFloat32(byteOffset + 4, true),
@@ -143,12 +155,21 @@ export class KSplatTreeBuffer {
         for (let i = 0; i < nodeCount; i++) {
             const dataByteOffset = offset + view.getInt32(byteOffset, true); byteOffset += 4;
             const elementLength = view.getInt32(byteOffset, true); byteOffset += 4;
-            const startLocalId =  view.getInt32(byteOffset, true); byteOffset += 4;
+            const startLocalId = view.getInt32(byteOffset, true); byteOffset += 4;
             const endLocalId = view.getInt32(byteOffset, true); byteOffset += 4;
 
             const childIds = [];
             for (let c = 0; c < 8; c++) {
                 childIds.push(view.getInt32(byteOffset, true)); byteOffset += 4;
+            }
+
+            // Children are always stored after their parent (pre-order), node data inside the tree and 4 byte aligned
+            const validChildren = childIds.every((childId) => childId === -1 || (childId > i && childId < nodeCount));
+            const dataEnd = dataByteOffset - offset + elementLength * 4;
+            if (!validChildren || elementLength < 0 || dataByteOffset % 4 !== 0 || dataByteOffset - offset < nodeRecordsEnd ||
+                dataEnd > view.byteLength) {
+                console.error(`KSplatTreeBuffer::deserializeOctreeBuffer: invalid data for node ${i}, wrong tree offset ?`);
+                return null;
             }
 
             nodeDataOffsets.push({
@@ -461,7 +482,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
      * @return {Promise<SplatSubTree | null>}
      */
     static async loadTree(header, source) {
-        const offset = header.getTotalSplatBufferSize();
+        const offset = header.getTreeOffset();
 
         let treeBuffer = source;
         let treeOffset = offset;
@@ -480,6 +501,11 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
             treeOffset,
             StreamingMode.Tiles
         );
+
+        if (!subTreeRoot) {
+            return null;
+        }
+
         const subtree = new SplatSubTree(this.maxDepth, this.maxCentersPerNode);
         subtree.sceneMin = subTreeRoot.min;
         subtree.sceneMax = subTreeRoot.max;
