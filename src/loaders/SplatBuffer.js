@@ -1792,14 +1792,16 @@ export class VirtualSplatBuffer {
      * @param {number} y
      * @param {number} z
      * @param {number} [minimumAlpha=1] splats with a lower alpha are made fully transparent
-     * @return {Object | null} null if the node does not exist, otherwise returns the packed node data
+     * @return {Promise<Object | null>} null if the node does not exist, otherwise returns the packed node data
      */
-    getSplatNodeData(level, x, y, z, minimumAlpha = 1) {
+    async getSplatNodeData(level, x, y, z, minimumAlpha = 1) {
         const key = VirtualSplatBuffer.getNodeKey(level, x, y, z);
         const cached = this.nodeDataCache.get(key);
         if (cached) return cached;
 
-        const packed = this.loader.loadNode(level, x, y, z, this.format);
+        const packed = await this.loader.loadNode(level, x, y, z, this.format);
+        if (!packed || packed.error) return packed;
+
         const data = {
             key,
             level, x, y, z,
@@ -1820,9 +1822,9 @@ export class VirtualSplatBuffer {
     /**
      * Retrieves the splat subtree data for the node mapped into the tuple (level, x, y, z). Uses the same conventions
      * as 3D tiles with implicit tiling. For now only the root subtree exists, and it contains only the root node.
-     * @return {SplatSubTree | null} null if the subtree does not exist, otherwise returns the splat Subtree data
+     * @return {Promise<SplatSubTree | null>} null if the subtree does not exist, otherwise returns the splat Subtree data
      */
-    getSplatSubtree(level, x, y, z) {
-        return this.loader.loadSubtree(level, x, y, z);
+    async getSplatSubtree(level, x, y, z) {
+        return await this.loader.loadSubtree(level, x, y, z);
     }
 }

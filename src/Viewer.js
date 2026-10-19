@@ -327,6 +327,7 @@ export class Viewer {
             );
 
             this.splatMesh.onNodesLoaded(() => this.onDynamicSplatMeshNodesLoaded());
+            this.splatMesh.onNodeDataReady(() => this.forceRenderNextFrame());
         } else {
             this.splatMesh = new SplatMesh(this.splatRenderMode, this.dynamicScene, this.enableOptionalEffects,
                 this.halfPrecisionCovariancesOnGPU, this.devicePixelRatio, this.gpuAcceleratedSort,
