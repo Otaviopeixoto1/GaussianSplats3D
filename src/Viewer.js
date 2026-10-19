@@ -130,7 +130,7 @@ export class Viewer {
         }
         // Fixed size of the DynamicSplatMesh splat index space. GPU allocations stay below it and the sort worker is created
         // once with this capacity (never resized). The sort worker uses about 36 bytes per splat of this capacity.
-        this.maxResidentSplats = options.maxResidentSplats || 4194304;
+        this.maxResidentSplats = options.maxResidentSplats || 8388608;
 
         // When true, will perform additional steps during rendering to address artifacts caused by the rendering of gaussians at a
         // substantially different resolution than that at which they were rendered during training. This will only work correctly

@@ -105,6 +105,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.splatAllocatorReady = false;
         // Fixed size of the splat index space: every allocated splat index is below this value. The sort worker is
         // created once with this capacity (see getMaxSplatCount()), so it never has to be resized.
+        // TODO: Improve this so that we dont waste texture space. Must also fix LRU list to work with number of pages
         this.maxResidentSplats = maxResidentSplats;
         // The current total splat count loaded by this mesh
         this.currentSplatCount = 0;
@@ -382,7 +383,7 @@ export class DynamicSplatMesh extends THREE.Mesh {
             return false;
         }
 
-        console.log("DynamicSplatMesh: LOADING", node)
+        // console.log("DynamicSplatMesh: LOADING", node)
 
         const loadStart = performance.now();
         const scene = this.scenes[sceneIndex];
@@ -415,12 +416,12 @@ export class DynamicSplatMesh extends THREE.Mesh {
         node.numSplats = nodeData.splatCount;
 
         if (this.logLevel >= LogLevel.Info) {
-            console.log(`DynamicSplatMesh: loaded node (${level}, ${x}, ${y}, ${z}): ${nodeData.splatCount} splats `);
-            console.log(`offset: ${stagingBuffer.splatOffset}, upload ${(performance.now() - loadStart).toFixed(1)} ms`);
+            // console.log(`DynamicSplatMesh: loaded node (${level}, ${x}, ${y}, ${z}): ${nodeData.splatCount} splats `);
+            // console.log(`offset: ${stagingBuffer.splatOffset}, upload ${(performance.now() - loadStart).toFixed(1)} ms`);
         }
 
         this.currentSplatCount += nodeData.splatCount;
-        console.log("NODE ALLOC", node.allocation);
+        // console.log("NODE ALLOC", node.allocation);
         return true;
     }
 
@@ -432,6 +433,8 @@ export class DynamicSplatMesh extends THREE.Mesh {
      */
     unloadSplatNode(node) {
         const allocation = node.allocation;
+        console.log("Unloading", node.key, node.numSplats);
+
         if (allocation.resident && allocation.textureAllocations) {
             this.splatAllocator.free(allocation);
             this.currentSplatCount -= node.numSplats;

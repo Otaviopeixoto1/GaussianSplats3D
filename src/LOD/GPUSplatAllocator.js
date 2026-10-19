@@ -55,6 +55,7 @@ class PagedTexture {
         this.glFormat = webGLUtils.convert(this.texture.format, this.texture.colorSpace);
 
         this.maxPages = texture.image.height;
+        console.log("MAX PAGES:", this.maxPages)
 
         this.texelsPerPage = texture.image.width;
         this.elementsPerTexel = elementsPerTexel;
@@ -629,7 +630,7 @@ export class GPUSplatAllocator {
         // }
 
         // TODO:  use maxSplats to calculate the sceneIndexesTexSize
-        const sceneIndexesTexSize = new THREE.Vector2(4096, 1024)
+        const sceneIndexesTexSize = new THREE.Vector2(4096, 2048)
         const paddedTransformIndexes = new Uint32Array(sceneIndexesTexSize.x * sceneIndexesTexSize.y * Constants.SCENE_INDEXES_ELEMENTS_PER_TEXEL);
 
         // TODO: Remove. Move packing logic elsewhere
@@ -681,6 +682,7 @@ export class GPUSplatAllocator {
         for (const name in this.splatTextureDescriptors) {
             const desc = this.splatTextureDescriptors[name];
             desc.texture.maxPages = splatCapacity * desc.texelsPerSplat / desc.texture.texelsPerPage;
+            console.log("TEXTURE: ", name, desc.texture.maxPages);
         }
 
         this.splatCapacity = splatCapacity;
@@ -769,7 +771,10 @@ export class GPUSplatAllocator {
      * @return {SplatStagingBuffer | null} the staging buffer for transferring memory to GPU or null if OOM
      */
     allocate(numSplats) {
-        if (!(numSplats > 0)) throw new Error(`GPUSplatAllocator::allocate() -> invalid splat count ${numSplats}`);
+        if (!(numSplats > 0)) {
+            console.error(`GPUSplatAllocator::allocate(): invalid splat count ${numSplats}`);
+            return null;
+        }
 
         const centerColorsTextureDes = this.splatTextureDescriptors['centerColors'];
         const covarancesTextureDesc = this.splatTextureDescriptors['covariances'];
@@ -787,7 +792,11 @@ export class GPUSplatAllocator {
         const allocations = [];
         const allocateFrom = (desc) => {
             const alloc = desc.texture.allocatePages(desc.texelsPerSplat * numAllocatedSplats);
-            if (alloc) allocations.push({ desc, alloc });
+            if (alloc) {
+                allocations.push({desc, alloc});
+            } else {
+                console.error(`GPUSplatAllocator::PagedTexture: OOM ${desc.texture.currentPage}, max: ${desc.texture.maxPages}, waiting ${desc.texture._freeAllocs.length}`)
+            }
             return alloc;
         };
         const rollback = () => {

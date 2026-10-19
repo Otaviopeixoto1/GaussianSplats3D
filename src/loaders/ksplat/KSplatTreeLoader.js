@@ -393,7 +393,6 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         }
 
         const nodeIndexes = node.data.indexes;
-        console.log(nodeIndexes.length, "For: ", level, x, y, z);
         if (nodeIndexes.length === 0) {
             return null
         }
