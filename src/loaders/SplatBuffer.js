@@ -387,33 +387,21 @@ export class KSplatHeader {
     }
 
     /**
+     * @return {number}
+     */
+    getTotalSplatBufferSize() {
+        let size = KSplatHeader.HeaderSizeBytes + this.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes;
+        for (let i = 0; i < this.maxSectionCount; i++) {
+            size += this.sections[i].storageSizeBytes;
+        }
+        return size;
+    }
+
+    /**
      * @param {SplatBuffer} splatBuffer
      */
     static calculateTotalSplatBufferSize(splatBuffer) {
-        const buffer = splatBuffer.bufferData;
-        //TODO: Remove this after figuring out the diff between splatCount and maxSplatCount stored in the header...
-        const header = KSplatHeader.parseHeaderData(buffer);
-
-        const compressionLevel = header.compressionLevel;
-        const maxSectionCount = header.maxSectionCount;
-        const sectionHeaderArrayUint16 = new Uint16Array(buffer, 0, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 2);
-        const sectionHeaderArrayUint32 = new Uint32Array(buffer, 0, maxSectionCount * KSplatHeader.SectionHeaderSizeBytes / 4);
-
-        let sectionHeaderBase = 0;
-        let sectionHeaderBaseUint16 = sectionHeaderBase / 2;
-        let sectionHeaderBaseUint32 = sectionHeaderBase / 4;
-        let sectionBase = KSplatHeader.HeaderSizeBytes + header.maxSectionCount * KSplatHeader.SectionHeaderSizeBytes;
-        for (let i = 0; i < maxSectionCount; i++) {
-            const sphericalHarmonicsDegree = sectionHeaderArrayUint16[sectionHeaderBaseUint16 + 20];
-            const { bytesPerSplat } = KSplatHeader.calculateComponentStorage(compressionLevel, sphericalHarmonicsDegree);
-
-            sectionBase += bytesPerSplat * header.splatCount;
-            sectionHeaderBase += KSplatHeader.SectionHeaderSizeBytes;
-            sectionHeaderBaseUint16 = sectionHeaderBase / 2;
-            sectionHeaderBaseUint32 = sectionHeaderBase / 4;
-        }
-
-        return sectionBase;
+        return splatBuffer.header.getTotalSplatBufferSize();
     }
 
     static computeBucketsForUncompressedSplatArray(splatArray, blockSize, bucketSize) {
