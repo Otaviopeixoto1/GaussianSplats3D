@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { SplatBuffer, KSplatTreeLoader } from '../../build/gaussian-splats-3d.module.js';
+import { SplatBuffer, KSplatHeader, KSplatTreeLoader } from '../../build/gaussian-splats-3d.module.js';
 import { SplatTilesConverter } from './SplatTileConverter.js';
 
 // Dynamically import playcanvas/splat-transform
@@ -35,6 +35,18 @@ KSplatTreeLoader.checkVersion(fileData.buffer);
 const splatBuffer = new SplatBuffer(fileData.buffer);
 const subTree = KSplatTreeLoader.loadTree(splatBuffer);
 
+// TEMPORARY. TODO: FIX Splat load count mismatch 
+// During rendering we ignore the splat counts stored in the file and always uses the max counts (see KSplatHeader.constructFromBuffer),
+// but SplatTransform reads the stored counts, which can be out of date. We modify here the splat count SplatTransform reads the same 
+// splats as the renderer. Done after loadTree() because KSplatHeader.calculateTotalSplatBufferSize() uses the stored header count to find the tree.
+const sections = splatBuffer.header.sections;
+const headerCounts = new Uint32Array(fileData.buffer, 0, 5);
+headerCounts[2] = sections.length;
+headerCounts[4] = sections.reduce((count, section) => count + section.maxSplatCount, 0);
+for (let i = 0; i < sections.length; i++) {
+    new Uint32Array(fileData.buffer, KSplatHeader.HeaderSizeBytes + i * KSplatHeader.SectionHeaderSizeBytes, 1)[0] = sections[i].maxSplatCount;
+}
+
 // Splat data (SplatTransform reads the .kstree as a .ksplat and ignores the tree at the end of the file).
 // dataTable rows are in SplatBuffer order, this allows the node indexes can be used directly as row indexes.
 const readFileSystem = new MemoryReadFileSystem();
@@ -47,7 +59,6 @@ dataTable.transform = Transform.IDENTITY;
 
 const writeFileSystem = new MemoryFileSystem();
 let splatCount = 0;
-let byteCount = 0;
 const tiles = SplatTilesConverter.getTiles(subTree);
 for (const tile of tiles) {
     await writeGlb({ filename: tile.path, dataTable: dataTable.clone({ rows: tile.node.data.indexes }) }, writeFileSystem);
@@ -59,7 +70,6 @@ for (const tile of tiles) {
     fs.writeFileSync(outputFile, glb);
 
     splatCount += tile.node.data.indexes.length;
-    byteCount += glb.byteLength;
 }
 
 console.log(`Wrote ${tiles.length} tiles (${splatCount} splats) to ${outputDirectory}`);
