@@ -202,17 +202,9 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
         this.baseSplatTree = new SplatTree(12, 1000);
 
+        const sceneLoadPromises = [];
         for (let i = 0; i < virtualSplatBuffers.length; i++) {
-            this.pushSplatScene(virtualSplatBuffers[i], sceneOptions[i]);
-        }
-
-        this.splatTree = this.baseSplatTree;
-
-        // Request the root node of every scene. The nodes are uploaded on the next onBeforeRender().
-        // Every loaded node also pushes its centers + scene indexes into the presort command buffer (see loadSplatNode()),
-        // at the node global splat indexes.
-        for (let i = 0; i < this.scenes.length; i++) {
-            this.requestSplatNodeLoad(i, this.scenes[i].subtree.rootNode);
+            sceneLoadPromises.push(this.pushSplatScene(i, virtualSplatBuffers[i], sceneOptions[i]));
         }
 
         this.updateTransforms();
@@ -223,20 +215,33 @@ export class DynamicSplatMesh extends THREE.Mesh {
             console.log(`Dynamic Splat Mesh build: ${(performance.now() - buildStart).toFixed(1)} ms, ${this.pendingNodeLoads.length} pending nodes`);
         }
 
-        if (this.onSplatTreeReadyCallback) this.onSplatTreeReadyCallback(this.splatTree);
-        this.onSplatTreeReadyCallback = null;
+        Promise.all(sceneLoadPromises).then(() => {
+            this.splatTree = this.baseSplatTree;
+            this.baseSplatTree.subTrees.length = sceneLoadPromises.length;
+
+            // Request the root node of every scene. The nodes are uploaded on the next onBeforeRender().
+            // Every loaded node also pushes its centers + scene indexes into the presort command buffer (see loadSplatNode()),
+            // at the node global splat indexes.
+            for (let i = 0; i < this.scenes.length; i++) {
+                this.requestSplatNodeLoad(i, this.scenes[i].subtree.rootNode);
+            }
+
+            if (this.onSplatTreeReadyCallback) this.onSplatTreeReadyCallback(this.splatTree);
+            this.onSplatTreeReadyCallback = null;
+        })
     }
 
     /**
      * Push a new scene to be loaded into this mesh. Only creates the scene and its subtree, no splat data is loaded.
+     * @param {number} sceneIndex The base splat data
      * @param {VirtualSplatBuffer} virtualSplatBuffer The base splat data
      * @param {object} sceneOptions See build()
-     * @return {SplatScene}
+     * @return {Promise<void>}
      */
-    pushSplatScene(virtualSplatBuffer, sceneOptions) {
+    async pushSplatScene(sceneIndex, virtualSplatBuffer, sceneOptions) {
         if (this.scenes.length >= Constants.MaxScenes) {
             console.error(`DynamicSplatMesh::pushSplatScene: at most ${Constants.MaxScenes} scenes are supported`);
-            return null;
+            return;
         }
         const options = sceneOptions || {};
         let positionArray = options['position'] || [0, 0, 0];
@@ -253,12 +258,12 @@ export class DynamicSplatMesh extends THREE.Mesh {
         this.sceneOptions.push(options);
 
         // Get root subtree:
-        const subtree = virtualSplatBuffer.getSplatSubtree(0, 0, 0, 0);
+        const subtree = await virtualSplatBuffer.getSplatSubtree(0, 0, 0, 0);
         subtree.splatMesh = this;
         scene.subtree = subtree;
-        this.baseSplatTree.subTrees.push(subtree);
+        this.baseSplatTree.subTrees[sceneIndex] = subtree;
 
-        return scene;
+        return;
     }
 
     /**
@@ -333,51 +338,49 @@ export class DynamicSplatMesh extends THREE.Mesh {
 
         //
         // TODO:
-        //  -[x] Define the node keys during the subtree loading process (KSplatTreeBuffer:deserializeOctree)
-        //  -[] Test the loading of root nodes again with the whole system
-        //  -[x] Define a way for the Viewer to identify that it needs to load a node
         //  --[] Make the viewer call requestSplatNodeLoad(). (LAST THING)
-        //
         //
         const level = node.level;
         const {x, y, z} = node.key;
 
 
-        const nodeData = virtualSplatBuffer.getSplatNodeData(level, x, y, z, scene.minimumAlpha);
-        if (!nodeData) return false;
+        virtualSplatBuffer.getSplatNodeData(level, x, y, z, scene.minimumAlpha).then((nodeData) => {
+            if (!nodeData) return;
 
-        const packTime = performance.now() - loadStart;
+            const packTime = performance.now() - loadStart;
 
-        const stagingBuffer = this.splatAllocator.allocate(nodeData.splatCount);
-        if (!stagingBuffer) {
-            console.error(`DynamicSplatMesh: out of GPU splat memory while loading node ${key} (${nodeData.splatCount} splats)`);
-            return false;
-        }
-        stagingBuffer.writeNodeData(nodeData, sceneIndex);
-        stagingBuffer.submit(node.allocation);
+            const stagingBuffer = this.splatAllocator.allocate(nodeData.splatCount);
+            if (!stagingBuffer) {
+                console.error(`DynamicSplatMesh: out of GPU splat memory while loading node ${key} (${nodeData.splatCount} splats)`);
+                return;
+            }
+            stagingBuffer.writeNodeData(nodeData, sceneIndex);
+            stagingBuffer.submit(node.allocation);
 
-        // Send the splat centers of this node to the sort worker, stored at the node global splat indexes.
-        // If releaseNodeData is true (default) This centers buffer is transferred (not copied) to the worker
-        const centers = releaseNodeData ? nodeData.centers : nodeData.centers.slice();
-        this.submitNodeDataForDistancesComputation(stagingBuffer.splatOffset, nodeData.splatCount, centers, sceneIndex);
+            // Send the splat centers of this node to the sort worker, stored at the node global splat indexes.
+            // If releaseNodeData is true (default) This centers buffer is transferred (not copied) to the worker
+            const centers = releaseNodeData ? nodeData.centers : nodeData.centers.slice();
+            this.submitNodeDataForDistancesComputation(stagingBuffer.splatOffset, nodeData.splatCount, centers, sceneIndex);
 
-        if (releaseNodeData) virtualSplatBuffer.releaseSplatNodeData(level, x, y, z);
+            if (releaseNodeData) virtualSplatBuffer.releaseSplatNodeData(level, x, y, z);
 
-        // The Viewer (gatherSceneNodesForSort) reads the global splat indexes of a node from here
-        // TODO: DONT ALLOCATE A NEW Array EVERY TIME. USE THE ONE WE BOUND TO THE GEOMETRY !!!
-        const indexes = new Uint32Array(nodeData.splatCount);
-        for (let i = 0; i < nodeData.splatCount; i++) indexes[i] = stagingBuffer.splatOffset + i;
-        node.data = { 'indexes': indexes }; //TODO: THE NODE DOESNT EVEN NEED TO HOLD THE INDEXES LIKE THIS !!! (just the range)
+            // The Viewer (gatherSceneNodesForSort) reads the global splat indexes of a node from here
+            // TODO: DONT ALLOCATE A NEW Array EVERY TIME. USE THE ONE WE BOUND TO THE GEOMETRY !!!
+            const indexes = new Uint32Array(nodeData.splatCount);
+            for (let i = 0; i < nodeData.splatCount; i++) indexes[i] = stagingBuffer.splatOffset + i;
+            node.data = { 'indexes': indexes }; //TODO: THE NODE DOESNT EVEN NEED TO HOLD THE INDEXES LIKE THIS !!! (just the range)
 
 
-        if (this.logLevel >= LogLevel.Info) {
-            console.log(`DynamicSplatMesh: loaded node (${level}, ${x}, ${y}, ${z}): ${nodeData.splatCount} splats `);
-            console.log(`offset: ${stagingBuffer.splatOffset} (pack ${packTime.toFixed(1)} ms`);
-            console.log(`pack + upload ${(performance.now() - loadStart).toFixed(1)} ms)`);
-        }
+            if (this.logLevel >= LogLevel.Info) {
+                console.log(`DynamicSplatMesh: loaded node (${level}, ${x}, ${y}, ${z}): ${nodeData.splatCount} splats `);
+                console.log(`offset: ${stagingBuffer.splatOffset} (pack ${packTime.toFixed(1)} ms`);
+                console.log(`pack + upload ${(performance.now() - loadStart).toFixed(1)} ms)`);
+            }
 
-        this.currentSplatCount += node.numSplats;
-        console.log("NODE ALLOC", node.allocation);
+            this.currentSplatCount += node.numSplats;
+            console.log("NODE ALLOC", node.allocation);
+        });
+
         return true;
     }
 

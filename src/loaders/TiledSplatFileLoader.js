@@ -10,9 +10,9 @@ export class ITiledSplatFileLoader {
      * @param {number} y
      * @param {number} z
      * @param {SplatDataFormat} format
-     * @return {Object | null} Node data or null if node is empty
+     * @return {Promise<Object | null>} Node data or null if node is empty
      */
-    loadNode(level, x, y, z, format) { return null; };
+    async loadNode(level, x, y, z, format) { return null; };
 
     /**
      * @abstract method for loading subtree data from a file in the specified indexes
@@ -20,13 +20,13 @@ export class ITiledSplatFileLoader {
      * @param {number} x
      * @param {number} y
      * @param {number} z
-     * @return {SplatSubTree | null} Node data or null if node is empty
+     * @return {Promise<SplatSubTree | null>} Node data or null if node is empty
      */
-    loadSubtree(level, x, y, z) { return null; }
+    async loadSubtree(level, x, y, z) { return null; }
 
     /**
      * Method for loading a byte range from a file
-     * @return {ArrayBuffer | null}
+     * @return {Promise<ArrayBuffer | null>}
      */
     static async fetchBytes(url, from, to) {
         const res = await fetch(url, {headers: {

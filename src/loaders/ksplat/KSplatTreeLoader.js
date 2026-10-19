@@ -376,7 +376,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         return { from: nodeIndexes[0], to: nodeIndexes[nodeIndexes.length - 1], count: nodeIndexes.length };
     }
 
-    loadNode(level, x, y, z, format) {
+    async loadNode(level, x, y, z, format) {
         const nodeRange = this.getNodeSplatRange(level, x, y, z);
         if (!nodeRange) {
             return null;
@@ -398,7 +398,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
         return packed;
     }
 
-    loadSubtree(level, x, y, z) {
+    async loadSubtree(level, x, y, z) {
         //TODO: Add support for loading subtrees that are not root !
         const isRootNode = level === 0 && x === 0 && y === 0 && z === 0;
         if (!isRootNode) {

@@ -323,8 +323,9 @@ export class Viewer {
             this.splatMesh = new DynamicSplatMesh(this.halfPrecisionCovariancesOnGPU, this.devicePixelRatio,
                 this.gpuAcceleratedSort, this.integerBasedSort, this.antialiased,
                 this.maxScreenSpaceSplatSize, this.logLevel, this.sphericalHarmonicsDegree,
-                this.sceneFadeInRateMultiplier, this.kernel2DSize, this.maxResidentSplats);
-            // The DynamicSplatMesh uploads its nodes when it is first drawn, the sort worker is set up after that
+                this.sceneFadeInRateMultiplier, this.kernel2DSize, this.maxResidentSplats
+            );
+
             this.splatMesh.onNodesLoaded(() => this.onDynamicSplatMeshNodesLoaded());
         } else {
             this.splatMesh = new SplatMesh(this.splatRenderMode, this.dynamicScene, this.enableOptionalEffects,
@@ -1365,7 +1366,7 @@ export class Viewer {
      * Build the DynamicSplatMesh with the given splat buffers: every SplatBuffer is wrapped in a VirtualSplatBuffer
      * and the root node of each one is requested. No renderer is needed: the nodes are uploaded into GPUSplatAllocator
      * memory the next time the mesh is drawn (DynamicSplatMesh.onBeforeRender()), which also pushes their centers to
-     * the sort worker through the presort command buffer. The sort worker is then set up in onDynamicSplatMeshNodesLoaded().
+     * the sort worker through the presort command buffer.
      * @param {Array<SplatBuffer | VirtualSplatBuffer>} splatBuffers
      * @param {Array<object>} splatBufferOptions
      * @return {object}
@@ -1388,11 +1389,10 @@ export class Viewer {
     /**
      * Called by the DynamicSplatMesh after it uploaded nodes (during rendering). The centers of the new nodes are already
      * queued in the presort command buffer and we can assume they reach the worker before the sort command.
+     * 
+     * TODO: Dont sort every frame, wait for these updates to run !
      */
     onDynamicSplatMeshNodesLoaded() {
-        if (this.isDisposingOrDisposed() || !this.splatRenderReady || !this.sortWorker) return;
-        // Does nothing until the viewer is initialized (drop-in mode), the regular update() sorts in that case
-        this.runSplatSort(true, true);
         this.forceRenderNextFrame();
     }
 
