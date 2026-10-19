@@ -30,6 +30,7 @@ import { LogLevel } from './LogLevel.js';
 import { SceneRevealMode } from './SceneRevealMode.js';
 import { SplatRenderMode } from './SplatRenderMode.js';
 import {BinaryHeap} from "../util/binary-heap.js";
+import {LRUList} from "../util/lru-list.js";
 import {SplatBuffer, VirtualSplatBuffer} from './loaders/SplatBuffer.js';
 import {DynamicSplatMesh} from './splatmesh/DynamicSplatMesh.js';
 import {Tiles3DLoader} from "./loaders/tiles3D/Tiles3DLoader.js";
@@ -317,6 +318,12 @@ export class Viewer {
 
         this.minimumNodePixelSize = options.minimumNodePixelSize || 30;
         this.splatBudget = options.splatBudget || 1000000;
+
+        // DynamicSplatMesh only: nodes that are loaded or loading, by last use. Their total splat count is kept at most
+        // splatBudget, the least recently used nodes are unloaded to make room (see updateSplatNodeMemory())
+        this.splatNodeLRU = new LRUList();
+        // DynamicSplatMesh only: maximum number of node loads requested per traversal (frame)
+        this.maxNodeRequestsPerFrame = options.maxNodeRequestsPerFrame || 4;
     }
 
     createSplatMesh() {
@@ -1382,6 +1389,7 @@ export class Viewer {
             return (splatBuffer instanceof VirtualSplatBuffer) ? splatBuffer : new VirtualSplatBuffer(new KSplatTreeLoader(splatBuffer));
         });
 
+        this.splatNodeLRU.clear();
         this.splatMesh.build(virtualSplatBuffers, splatBufferOptions, this.preSortCommandBuffer, this.splatBudget * 1.5);
         // Make sure the mesh gets drawn so that its nodes are uploaded
         this.forceRenderNextFrame();
@@ -2284,6 +2292,9 @@ export class Viewer {
     gatherVisibleNodes(subTrees, baseModelViewMatrix, projMatrix, gatherAllNodes, isOrthographic) {
         const nodeRenderList = [];
 
+        const visibleNodes = [];
+        const nodesToLoad = [];
+
         let nodeRenderCount = 0;
         let splatRenderCount = 0;
 
@@ -2446,12 +2457,15 @@ export class Viewer {
             let distanceToNode = Math.sqrt(dd);
 
             if (!node.allocation.resident) {
-                if (!node.allocation.pending && level <= 1) {
-                    //TODO: Limit number of requests per frame
-                    this.splatMesh.requestSplatNodeLoad(element.subTreeId, node);
+                if (node.allocation.pending) {
+                    visibleNodes.push(node);
+                } else {
+                    // Requested in updateSplatNodeMemory() if it fits in the budget
+                    nodesToLoad.push(element);
                 }
                 continue;
             }
+            visibleNodes.push(node);
 
 
             if (node.data && node.data.indexes) {
@@ -2517,9 +2531,55 @@ export class Viewer {
         performance.measure("consume p-queue", "consume-p-queue-started", "consume-p-queue-ended")
 
         nodeRenderList.length = nodeRenderCount;
+
+        if (this.enableDynamicSplatMesh) {
+            this.updateSplatNodeMemory(visibleNodes, nodesToLoad);
+        }
+
         return {
             'nodes': nodeRenderList,
             'splatCount': splatRenderCount
+        }
+    }
+
+    updateSplatNodeMemory(visibleNodes, nodesToLoad) {
+        //
+        // TODO: Unload Splat nodes with LRU
+        //
+        const lru = this.splatNodeLRU;
+
+        // Children are touched before their parents, so that a parent is never less recently used than its children
+        let visibleCount = 0;
+        for (let i = visibleNodes.length - 1; i >= 0; i--) {
+            const node = visibleNodes[i];
+            lru.touch(node, node.numSplats);
+            visibleCount += node.numSplats;
+        }
+
+        // Nodes to request this frame: as many as fit in the budget together with the visible nodes, at most
+        // maxNodeRequestsPerFrame. The rest is requested in the next frames
+        let requestCount = 0;
+        let requestEnd = 0;
+        const maxRequests = Math.min(nodesToLoad.length, this.maxNodeRequestsPerFrame);
+        while (requestEnd < maxRequests) {
+            const numSplats = nodesToLoad[requestEnd].node.numSplats;
+            if (visibleCount + requestCount + numSplats > this.splatBudget) break;
+            requestCount += numSplats;
+            requestEnd++;
+        }
+
+        // Unload the least recently used nodes until the requested nodes fit. Since visibleCount + requestCount is within the
+        // budget, only nodes that are not visible this frame are unloaded
+        let freed = lru.freeMemory(this.splatBudget - requestCount);
+        while (freed !== null) {
+            this.splatMesh.unloadSplatNode(freed.data);
+            freed = freed.next;
+        }
+
+        for (let i = 0; i < requestEnd; i++) {
+            const { subTreeId, node } = nodesToLoad[i];
+            this.splatMesh.requestSplatNodeLoad(subTreeId, node);
+            lru.touch(node, node.numSplats);
         }
     }
 

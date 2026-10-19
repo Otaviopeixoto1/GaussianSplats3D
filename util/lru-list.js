@@ -1,21 +1,25 @@
-
 /**
- * @class An element of the OctreeLRU linked list
+ * @class An element of the LRU linked list
  */
-class LRUItem{
-    constructor(node){
-        this.node = node;
+export class LRUItem {
+    /**
+     * @param {*} data The stored object (also used as the key of the item)
+     * @param {number} count Amount of resources used by the object (e.g. splat count)
+     */
+    constructor(data, count) {
+        this.data = data;
+        this.count = count;
         this.next = null;
         this.previous = null;
     }
 }
 
 /**
- * @class A doubly-linked-list of the Least Recently Used nodes.
+ * @class A doubly-linked-list of the Least Recently Used objects.
  */
-export class LRUList{
-    constructor(){
-        // a list of all items in the lru list
+export class LRUList {
+    constructor() {
+        // a list of all items in the lru list. Each object instance is its own key that maps to LRUItem
         this.items = new Map();
 
         // the least recently used item
@@ -24,107 +28,69 @@ export class LRUList{
         this.last = null;
 
         this.elements = 0;
-        this.numPoints = 0;
+
+        // sum of the counts of all items
+        this.count = 0;
     }
 
-    size(){
+    size() {
         return this.elements;
     }
 
-    contains(node){
-        return this.items.has(node.id);
+    contains(data) {
+        return this.items.has(data);
     }
 
-    touch(node){
-        if (!node.loaded) {
-            return;
-        }
-
-        let item;
-        if (!this.items.has(node.id)) {
-            // add to list
-            item = new LRUItem(node);
-            item.previous = this.last;
-            this.last = item;
-            if (item.previous !== null) {
-                item.previous.next = item;
-            }
-
-            this.items.set(node.id, item);
-            this.elements++;
-
-            if (this.first === null) {
-                this.first = item;
-            }
-            this.numPoints += node.numPoints;
+    /**
+     * Adds an object as the most recently used one, or moves it to the end if it is already in the list.
+     * @param {*} data
+     * @param {number} count Count of the object (replaces the previous count if the object is already in the list)
+     */
+    touch(data, count = 0) {
+        let item = this.items.get(data);
+        if (item) {
+            this.unlink(item);
+            this.count += count - item.count;
+            item.count = count;
         } else {
-            // update in list
-            item = this.items.get(node.id);
-            if (item.previous === null) {
-                // handle touch on first element
-                if (item.next !== null) {
-                    this.first = item.next;
-                    this.first.previous = null;
-                    item.previous = this.last;
-                    item.next = null;
-                    this.last = item;
-                    item.previous.next = item;
-                }
-            } else if (item.next === null) {
-                // handle touch on last element
-            } else {
-                // handle touch on any other element
-                item.previous.next = item.next;
-                item.next.previous = item.previous;
-                item.previous = this.last;
-                item.next = null;
-                this.last = item;
-                item.previous.next = item;
-            }
+            item = new LRUItem(data, count);
+            this.items.set(data, item);
+            this.elements++;
+            this.count += count;
         }
+        this.append(item);
     }
 
-    remove(node){
-        let lruItem = this.items.get(node.id);
-        if (lruItem) {
-            if (this.elements === 1) {
-                this.first = null;
-                this.last = null;
-            } else {
-                if (!lruItem.previous) {
-                    this.first = lruItem.next;
-                    this.first.previous = null;
-                }
-                if (!lruItem.next) {
-                    this.last = lruItem.previous;
-                    this.last.next = null;
-                }
-                if (lruItem.previous && lruItem.next) {
-                    lruItem.previous.next = lruItem.next;
-                    lruItem.next.previous = lruItem.previous;
-                }
-            }
-
-            this.items.delete(node.id);
+    remove(data) {
+        const item = this.items.get(data);
+        if (item) {
+            this.unlink(item);
+            this.items.delete(data);
             this.elements--;
-            this.numPoints -= node.numPoints;
+            this.count -= item.count;
         }
     }
 
-    getLRUItem(){
-        if (this.first === null) {
-            return null;
-        }
-        let lru = this.first;
-
-        return lru.node;
+    /**
+     * @return {*} The least recently used object, or null if the list is empty
+     */
+    getLRUItem() {
+        return this.first === null ? null : this.first.data;
     }
 
-    toString(){
+    clear() {
+        this.items.clear();
+        this.first = null;
+        this.last = null;
+        this.elements = 0;
+        this.count = 0;
+    }
+
+    toString() {
         let string = '{ ';
         let curr = this.first;
         while (curr !== null) {
-            string += curr.node.id;
+            string += curr.data.id !== undefined ? curr.data.id : curr.data;
             if (curr.next !== null) {
                 string += ', ';
             }
@@ -136,40 +102,59 @@ export class LRUList{
     }
 
     /**
-     * Frees the least recently used OctreeGeometryNodes.
-     * @param {number} pointLoadLimit
+     * Removes the least recently used objects until the total count is at most maxCount.
+     * @param {number} maxCount
+     * @return {LRUItem | null} First item of the linked (sub)list of removed items. null if nothing was removed
      */
-    freeMemory(pointLoadLimit){
-        if (this.elements <= 1) {
-            return;
-        }
+    freeMemory(maxCount) {
+        let freedFirst = null;
+        let freedLast = null;
 
-        //todo: pass pointLoadLimit as argument
-        while (this.numPoints > pointLoadLimit) {
-            let element = this.first;
-            let node = element.node;
-            this.disposeDescendants(node);
-        }
-    }
+        while (this.count > maxCount && this.first !== null) {
+            const item = this.first;
+            this.remove(item.data);
 
-    disposeDescendants(node){
-        let stack = [];
-        stack.push(node);
-        while (stack.length > 0) {
-            let current = stack.pop();
-
-            current.dispose();
-            this.remove(current);
-
-            for (let key in current.childNodes) {
-                if (current.childNodes.hasOwnProperty(key)) {
-                    let child = current.childNodes[key];
-                    if (child.isLoaded()) {
-                        stack.push(current.childNodes[key]);
-                    }
-                }
+            item.previous = freedLast;
+            if (freedLast !== null) {
+                freedLast.next = item;
+            } else {
+                freedFirst = item;
             }
+            freedLast = item;
         }
+
+        return freedFirst;
     }
 
+    /**
+     * Removes an item from the linked list (not from the map)
+     */
+    unlink(item) {
+        if (item.previous !== null) {
+            item.previous.next = item.next;
+        } else {
+            this.first = item.next;
+        }
+        if (item.next !== null) {
+            item.next.previous = item.previous;
+        } else {
+            this.last = item.previous;
+        }
+        item.previous = null;
+        item.next = null;
+    }
+
+    /**
+     * Adds an item at the end of the linked list (most recently used)
+     */
+    append(item) {
+        item.previous = this.last;
+        item.next = null;
+        if (this.last !== null) {
+            this.last.next = item;
+        } else {
+            this.first = item;
+        }
+        this.last = item;
+    }
 }
