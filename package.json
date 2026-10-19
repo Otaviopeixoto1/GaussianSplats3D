@@ -75,6 +75,7 @@
         "file-loader": "6.2.0",
         "http-server": "14.1.1",
         "npm-watch": "0.11.0",
+        "@playcanvas/splat-transform": "^3.10.1",
         "prettier": "3.0.2",
         "prettier-eslint": "15.0.1",
         "rollup": "3.28.1",
@@ -82,13 +83,21 @@
         "url-loader": "4.1.1"
     },
     "peerDependencies": {
-        "three": ">=0.160.0"
+      "three": ">=0.160.0",
+      "@playcanvas/splat-transform": ">=3.10.0"
+    },
+    "peerDependenciesMeta": {
+      "@playcanvas/splat-transform": { "optional": true }
+    },
+    "bin": {
+      "kstree2glb": "util/conversions/KSTree2Glb.js"
     },
     "files": [
         "index.d.ts",
         "build/gaussian-splats-3d.umd.cjs",
         "build/gaussian-splats-3d.umd.cjs.map",
         "build/gaussian-splats-3d.module.js",
-        "build/gaussian-splats-3d.module.js.map"
+        "build/gaussian-splats-3d.module.js.map",
+        "util/conversions"
     ]
 }

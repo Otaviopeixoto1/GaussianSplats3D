@@ -5,7 +5,8 @@ import { SpzLoader } from './loaders/spz/SpzLoader.js';
 import { SplatLoader } from './loaders/splat/SplatLoader.js';
 import { KSplatLoader } from './loaders/ksplat/KSplatLoader.js';
 import * as LoaderUtils from './loaders/Utils.js';
-import { SplatBuffer } from './loaders/SplatBuffer.js';
+import { SplatBuffer, KSplatHeader } from './loaders/SplatBuffer.js';
+import { UncompressedSplatArray } from './loaders/UncompressedSplatArray.js';
 import { SplatParser } from './loaders/splat/SplatParser.js';
 import { SplatPartitioner } from './loaders/SplatPartitioner.js';
 import { SplatBufferGenerator } from './loaders/SplatBufferGenerator.js';
@@ -33,6 +34,8 @@ export {
     KSplatTreeLoader,
     LoaderUtils,
     SplatBuffer,
+    KSplatHeader,
+    UncompressedSplatArray,
     KSplatTreeBuffer,
     SplatParser,
     SplatPartitioner,
