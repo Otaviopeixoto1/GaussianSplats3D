@@ -113,8 +113,7 @@ export class KSplatTreeBuffer {
     }
 
 
-    // TODO: FOR NOW ADD OPTION TO DESERIALIZE AS TILES...
-    // TODO: LATER REWORK THE TREE FORMAT
+    // TODO: LATER REWORK THE TREE FORMAT. We dont need to store lists of splat ids, just store the id range
     /**
      * @param {ArrayBuffer} fileBuffer
      * @param {number} offset
@@ -177,6 +176,10 @@ export class KSplatTreeBuffer {
                 end: endLocalId
             });
 
+            //
+            // TODO: Dont store the whole index array, just store the offsets into the node data from .kstree file
+            //
+
             const nodeData = Array.from(new Int32Array(fileBuffer, dataByteOffset, elementLength));
             nodeDataList.push(nodeData);
             nodeIdToChildrenIds.push(childIds);
@@ -234,7 +237,7 @@ export class KSplatTreeBuffer {
                     node.level + 1, childId,
                     streamMode
                 );
-                const dataOffsets = nodeDataOffsets[0];
+                const dataOffsets = nodeDataOffsets[childId];
                 //TODO: Deprecate the index buffer saving (it will cause issues when saving multiple kstrees)
                 childNode.data = {
                     'indexes': nodeDataList[childId]
@@ -350,7 +353,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
 
     /**
      * Returns Range of splats stored in the given node, or null if the node does not exist.
-     * @return {{from: number, to: number, count: number} | null}
+     * @return {{from: number, to: number} | null}
      */
     getNodeSplatRange(level, x, y, z) {
         const path = [];
@@ -392,12 +395,7 @@ export class KSplatTreeLoader extends ITiledSplatFileLoader {
             node = child;
         }
 
-        const nodeIndexes = node.data.indexes;
-        if (nodeIndexes.length === 0) {
-            return null
-        }
-
-        return { from: nodeIndexes[0], to: nodeIndexes[nodeIndexes.length - 1], count: nodeIndexes.length };
+        return { from: node.startLocalId, to: node.endLocalId };
     }
 
     async waitSubtree() {

@@ -433,7 +433,6 @@ export class DynamicSplatMesh extends THREE.Mesh {
      */
     unloadSplatNode(node) {
         const allocation = node.allocation;
-        console.log("Unloading", node.key, node.numSplats);
 
         if (allocation.resident && allocation.textureAllocations) {
             this.splatAllocator.free(allocation);
